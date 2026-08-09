@@ -1,0 +1,99 @@
+name: cinematic-3d-task8-camera
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/camera/CharacterCamera.ts'
+      - 'ci-mirror/cinematic-3d-character-website/src/camera/CharacterCamera.test.ts'
+      - '.github/workflows/cinematic-3d-task8-camera.yml'
+  workflow_dispatch:
+
+jobs:
+  task8-camera:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only main mirror
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          cat > src/main.ts <<'EOF'
+          const app = document.querySelector<HTMLElement>('#app');
+          if (!app) throw new Error('Runtime root #app is missing.');
+          app.textContent = 'Runtime bootstrap pending';
+          EOF
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Verify mirrored Task 8 source hashes
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          cat > task8-expected-source-sha256.txt <<'EOF'
+          6574585d7c44b76a875ce829f00da2f7e442a57fbfced8b98e0acd700c88ba3c  src/camera/CharacterCamera.ts
+          30adf1d50c24ad342e0659ca8a3e6c346c00ccdd01c2844615233c07c3876712  src/camera/CharacterCamera.test.ts
+          EOF
+          sha256sum -c task8-expected-source-sha256.txt | tee task8-source-hash-check.log
+          sha256sum src/camera/CharacterCamera.ts src/camera/CharacterCamera.test.ts > task8-source-sha256.txt
+
+      - name: Run Task 8 targeted tests
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/camera/CharacterCamera.test.ts 2>&1 | tee task8-targeted-test.log
+
+      - name: Run full unit regression
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee task8-regression-test.log
+
+      - name: Run strict TypeScript and Vite build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee task8-build.log
+
+      - name: Record final result
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          node --version > task8-environment.txt
+          npm --version >> task8-environment.txt
+          npm ls --depth=0 >> task8-environment.txt
+          printf '{"targeted":"pass","regression":"pass","build":"pass","source_hash_match":true,"scope":"camera_policy_unit_contract"}\n' > task8-result.json
+
+      - name: Upload Task 8 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task8-camera-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task8-targeted-test.log
+            ci-mirror/cinematic-3d-character-website/task8-regression-test.log
+            ci-mirror/cinematic-3d-character-website/task8-build.log
+            ci-mirror/cinematic-3d-character-website/task8-source-sha256.txt
+            ci-mirror/cinematic-3d-character-website/task8-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task8-environment.txt
+            ci-mirror/cinematic-3d-character-website/task8-result.json
+          if-no-files-found: ignore
