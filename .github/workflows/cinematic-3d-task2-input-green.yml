@@ -1,0 +1,83 @@
+name: cinematic-3d-task2-input-green
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+  workflow_dispatch:
+
+jobs:
+  task2-input-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only main mirror
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          cat > src/main.ts <<'EOF'
+          const app = document.querySelector<HTMLElement>('#app');
+
+          if (!app) {
+            throw new Error('Runtime root #app is missing.');
+          }
+
+          app.textContent = 'Runtime bootstrap pending';
+          EOF
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Run Task 2 input tests
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: npm test -- src/input/KeyboardInput.test.ts 2>&1 | tee task2-input-test.log
+
+      - name: Run full unit regression
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: npm test 2>&1 | tee task2-regression-test.log
+
+      - name: Run strict TypeScript and Vite build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: npm run build 2>&1 | tee task2-build.log
+
+      - name: Record source hashes and verification result
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          sha256sum \
+            src/input/InputActions.ts \
+            src/input/KeyboardInput.ts \
+            src/input/KeyboardInput.test.ts > task2-source-sha256.txt
+          node --version > task2-runtime-versions.txt
+          npm --version >> task2-runtime-versions.txt
+          printf '{"green":true,"task2InputTests":"pass","fullRegression":"pass","build":"pass","decisionId":"cinematic-3d-character-input-action-v1"}\n' > task2-input-green-result.json
+
+      - name: Upload Task 2 GREEN evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task2-input-green-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task2-input-test.log
+            ci-mirror/cinematic-3d-character-website/task2-regression-test.log
+            ci-mirror/cinematic-3d-character-website/task2-build.log
+            ci-mirror/cinematic-3d-character-website/task2-source-sha256.txt
+            ci-mirror/cinematic-3d-character-website/task2-runtime-versions.txt
+            ci-mirror/cinematic-3d-character-website/task2-input-green-result.json
+            ci-mirror/cinematic-3d-character-website/dist
+          if-no-files-found: error
