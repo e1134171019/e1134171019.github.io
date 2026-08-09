@@ -58,11 +58,17 @@ jobs:
 
       - name: Run full unit regression
         working-directory: ci-mirror/cinematic-3d-character-website
-        run: npm test 2>&1 | tee task4-regression-test.log
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee task4-regression-test.log
 
       - name: Run strict TypeScript and Vite build
         working-directory: ci-mirror/cinematic-3d-character-website
-        run: npm run build 2>&1 | tee task4-build.log
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee task4-build.log
 
       - name: Record source hashes and environment
         working-directory: ci-mirror/cinematic-3d-character-website
