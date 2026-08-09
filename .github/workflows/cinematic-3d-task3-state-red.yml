@@ -1,0 +1,59 @@
+name: cinematic-3d-task3-state-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+  workflow_dispatch:
+
+jobs:
+  task3-state-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Run Task 3 RED test and reject false RED
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set +e
+          npm test -- src/state/state.test.ts 2>&1 | tee task3-state-red.log
+          test_exit=${PIPESTATUS[0]}
+          set -e
+
+          if [ "$test_exit" -eq 0 ]; then
+            echo "Expected Task 3 RED test to fail, but it passed."
+            exit 1
+          fi
+
+          if ! grep -Eq "(Failed to resolve import|Cannot find module|ERR_MODULE_NOT_FOUND).*(CharacterState|RuntimeState)" task3-state-red.log; then
+            echo "Task 3 failure was not the intended missing state reducer implementation; refusing false RED evidence."
+            cat task3-state-red.log
+            exit 1
+          fi
+
+          printf '{"expectedRed":true,"testExit":%s,"reason":"CharacterState/RuntimeState reducers missing by design"}\n' "$test_exit" > task3-state-red-result.json
+
+      - name: Upload Task 3 RED evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task3-state-red-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task3-state-red.log
+            ci-mirror/cinematic-3d-character-website/task3-state-red-result.json
+          if-no-files-found: error
