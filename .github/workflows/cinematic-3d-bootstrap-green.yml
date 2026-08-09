@@ -1,6 +1,9 @@
 name: cinematic-3d-bootstrap-green
 
 on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
   workflow_dispatch:
 
 jobs:
