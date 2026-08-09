@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Scene, type WebGLRenderer, type WebGLRendererParameters } from 'three';
+import {
+  Scene,
+  type Material,
+  type Mesh,
+  type WebGLRenderer,
+  type WebGLRendererParameters,
+} from 'three';
 import { createCharacterEnvironment } from './Environment';
 import { addCharacterReadabilityLighting } from './Lighting';
 import {
@@ -55,6 +61,19 @@ describe('renderer bootstrap lifecycle', () => {
     expect(pixelRatios).toEqual([1.5]);
     expect(sizeCalls).toEqual([[800, 600, false]]);
     expect(container.contains(handle.renderer.domElement)).toBe(true);
+    expect(handle.scene.getObjectByName('character-readability-lighting')).toBeDefined();
+
+    const ground = handle.scene.getObjectByName('character-ground') as Mesh;
+    expect(ground).toBeDefined();
+
+    let groundGeometryDisposed = false;
+    let groundMaterialDisposed = false;
+    ground.geometry.dispose = () => {
+      groundGeometryDisposed = true;
+    };
+    (ground.material as Material).dispose = () => {
+      groundMaterialDisposed = true;
+    };
 
     handle.resize(1024, 512);
 
@@ -64,6 +83,8 @@ describe('renderer bootstrap lifecycle', () => {
     handle.dispose();
 
     expect(disposed).toBe(true);
+    expect(groundGeometryDisposed).toBe(true);
+    expect(groundMaterialDisposed).toBe(true);
     expect(container.contains(handle.renderer.domElement)).toBe(false);
   });
 
