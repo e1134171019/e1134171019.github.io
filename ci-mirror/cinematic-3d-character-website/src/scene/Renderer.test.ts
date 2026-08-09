@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  Color,
   Scene,
   type Material,
   type Mesh,
@@ -146,7 +147,7 @@ describe('minimal character environment', () => {
     const scene = new Scene();
     const environment = createCharacterEnvironment(scene);
 
-    expect(scene.background?.isColor).toBe(true);
+    expect(scene.background).toBeInstanceOf(Color);
     expect(environment.ground.name).toBe('character-ground');
     expect(environment.ground.geometry.type).toBe('PlaneGeometry');
     expect(environment.ground.rotation.x).toBeCloseTo(-Math.PI / 2);
