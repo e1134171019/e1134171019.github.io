@@ -1,5 +1,6 @@
 name: cinematic-3d-task3-state-green
 
+# Final fresh verification trigger after formal source hash synchronization.
 on:
   push:
     branches:
