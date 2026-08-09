@@ -1,0 +1,55 @@
+name: cinematic-3d-task8-camera-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/camera/CharacterCamera.test.ts'
+      - '.github/workflows/cinematic-3d-task8-camera-red.yml'
+  workflow_dispatch:
+
+jobs:
+  task8-camera-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Verify Task 8 RED test source identity
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          echo '30adf1d50c24ad342e0659ca8a3e6c346c00ccdd01c2844615233c07c3876712  src/camera/CharacterCamera.test.ts' | sha256sum -c - | tee task8-red-source-hash-check.log
+
+      - name: Run Task 8 RED contract
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/camera/CharacterCamera.test.ts 2>&1 | tee task8-camera-red.log
+
+      - name: Upload Task 8 RED evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task8-camera-red-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task8-red-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task8-camera-red.log
+          if-no-files-found: ignore
