@@ -1,0 +1,102 @@
+name: cinematic-3d-task6-character
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/character/**'
+      - '.github/workflows/cinematic-3d-task6-character.yml'
+  workflow_dispatch:
+
+jobs:
+  task6-character:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only main mirror
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          cat > src/main.ts <<'EOF'
+          const app = document.querySelector<HTMLElement>('#app');
+
+          if (!app) {
+            throw new Error('Runtime root #app is missing.');
+          }
+
+          app.textContent = 'Runtime bootstrap pending';
+          EOF
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Verify mirrored Task 6 source hashes
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          cat > task6-expected-source-sha256.txt <<'EOF'
+          96f5980e2c6eb929e5c741a49feae59788f3773e418829b7a31b7e76ba95986b  src/character/CharacterController.ts
+          b1c58d959be4066f9d605ba7fcb8cdb9e8732dadd7bc82207e98e071fd609c3c  src/character/CharacterController.test.ts
+          EOF
+          sha256sum -c task6-expected-source-sha256.txt | tee task6-source-hash-check.log
+          sha256sum src/character/CharacterController.ts src/character/CharacterController.test.ts > task6-source-sha256.txt
+
+      - name: Run Task 6 targeted tests
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/character/CharacterController.test.ts 2>&1 | tee task6-targeted-test.log
+
+      - name: Run full unit regression
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee task6-regression-test.log
+
+      - name: Run strict TypeScript and Vite build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee task6-build.log
+
+      - name: Record environment and final result
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          node --version > task6-environment.txt
+          npm --version >> task6-environment.txt
+          npm ls --depth=0 >> task6-environment.txt
+          printf '{"targeted":"pass","regression":"pass","build":"pass","source_hash_match":true}\n' > task6-result.json
+
+      - name: Upload Task 6 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task6-character-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task6-targeted-test.log
+            ci-mirror/cinematic-3d-character-website/task6-regression-test.log
+            ci-mirror/cinematic-3d-character-website/task6-build.log
+            ci-mirror/cinematic-3d-character-website/task6-source-sha256.txt
+            ci-mirror/cinematic-3d-character-website/task6-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task6-environment.txt
+            ci-mirror/cinematic-3d-character-website/task6-result.json
+          if-no-files-found: ignore
