@@ -1,0 +1,77 @@
+name: cinematic-3d-runtime-smoke
+
+on:
+  push:
+    branches:
+      - runtime-smoke/cinematic-3d
+  workflow_dispatch:
+
+jobs:
+  runtime-smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Prepare smoke package
+        run: |
+          cat > package.json <<'JSON'
+          {
+            "name": "cinematic-3d-runtime-smoke",
+            "private": true,
+            "type": "module"
+          }
+          JSON
+
+      - name: Verify npm registry access
+        run: |
+          echo "registry=$(npm config get registry)"
+          npm view three version
+          npm view vite version
+          npm view typescript version
+          npm view vitest version
+          npm view @playwright/test version
+          npm view jsdom version
+
+      - name: Install approved runtime and test dependencies
+        run: npm install --no-save three vite typescript vitest @playwright/test jsdom
+
+      - name: Verify packages
+        run: |
+          node -e "import('three').then(m => console.log('three_revision=' + m.REVISION))"
+          npx vite --version
+          npx tsc --version
+          npx vitest --version
+          npx playwright --version
+
+      - name: Write smoke result
+        run: |
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import * as THREE from 'three';
+          const result = {
+            ok: true,
+            node: process.version,
+            platform: process.platform,
+            arch: process.arch,
+            threeRevision: THREE.REVISION,
+            verifiedAt: new Date().toISOString(),
+            purpose: 'Validate GitHub Actions as dependency/bootstrap executor for Layer 07.'
+          };
+          fs.writeFileSync('runtime-smoke-result.json', JSON.stringify(result, null, 2));
+          console.log(JSON.stringify(result, null, 2));
+          NODE
+
+      - name: Upload smoke result
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-runtime-smoke-result
+          path: runtime-smoke-result.json
+          if-no-files-found: error
