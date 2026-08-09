@@ -83,7 +83,7 @@ describe('KeyboardInput', () => {
       if (originalVisibilityState) {
         Object.defineProperty(document, 'visibilityState', originalVisibilityState);
       } else {
-        delete (document as Document & { visibilityState?: string }).visibilityState;
+        Reflect.deleteProperty(document, 'visibilityState');
       }
     }
   });
