@@ -5,6 +5,8 @@ import {
   type WebGLRendererParameters,
 } from 'three';
 import type { RuntimeErrorCode } from '../app/RuntimeContracts';
+import { createCharacterEnvironment } from './Environment';
+import { addCharacterReadabilityLighting } from './Lighting';
 
 export type RendererInitializationErrorCode = Extract<
   RuntimeErrorCode,
@@ -110,6 +112,8 @@ export function createRendererHandle(options: RendererBootstrapOptions): Rendere
   }
 
   const scene = new Scene();
+  const environment = createCharacterEnvironment(scene);
+  addCharacterReadabilityLighting(scene);
   const camera = new PerspectiveCamera(45, options.width / options.height, 0.1, 100);
   const pixelRatio = options.pixelRatio ?? 1;
 
@@ -127,6 +131,8 @@ export function createRendererHandle(options: RendererBootstrapOptions): Rendere
       renderer.setSize(width, height, false);
     },
     dispose() {
+      environment.ground.geometry.dispose();
+      environment.ground.material.dispose();
       renderer.dispose();
 
       if (renderer.domElement.parentElement === options.container) {
