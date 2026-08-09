@@ -1,9 +1,6 @@
 name: cinematic-3d-task2-input-red
 
 on:
-  push:
-    branches:
-      - runtime-bootstrap/cinematic-3d
   workflow_dispatch:
 
 jobs:
