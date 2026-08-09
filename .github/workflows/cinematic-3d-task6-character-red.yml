@@ -1,0 +1,55 @@
+name: cinematic-3d-task6-character-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/character/CharacterController.test.ts'
+      - '.github/workflows/cinematic-3d-task6-character-red.yml'
+  workflow_dispatch:
+
+jobs:
+  task6-character-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Verify Task 6 RED test source identity
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          echo 'b1c58d959be4066f9d605ba7fcb8cdb9e8732dadd7bc82207e98e071fd609c3c  src/character/CharacterController.test.ts' | sha256sum -c - | tee task6-red-source-hash-check.log
+
+      - name: Run Task 6 RED contract
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/character/CharacterController.test.ts 2>&1 | tee task6-character-red.log
+
+      - name: Upload Task 6 RED evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task6-character-red-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task6-red-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task6-character-red.log
+          if-no-files-found: ignore
