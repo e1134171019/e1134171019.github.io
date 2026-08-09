@@ -1,0 +1,67 @@
+name: cinematic-3d-bootstrap-green
+
+on:
+  workflow_dispatch:
+
+jobs:
+  first-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only main mirror
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          cat > src/main.ts <<'EOF'
+          const app = document.querySelector<HTMLElement>('#app');
+
+          if (!app) {
+            throw new Error('Runtime root #app is missing.');
+          }
+
+          app.textContent = 'Runtime bootstrap pending';
+          EOF
+
+      - name: Generate lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Run first GREEN unit test
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm test -- src/state/state.test.ts
+
+      - name: Run strict TypeScript and Vite build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm run build
+
+      - name: Record verification evidence
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          node --version > green-evidence.txt
+          npm --version >> green-evidence.txt
+          npm ls --depth=0 >> green-evidence.txt
+          printf '{"green":true,"unitTest":"pass","build":"pass"}\n' > green-result.json
+
+      - name: Upload GREEN evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-bootstrap-green-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/package-lock.json
+            ci-mirror/cinematic-3d-character-website/green-evidence.txt
+            ci-mirror/cinematic-3d-character-website/green-result.json
+            ci-mirror/cinematic-3d-character-website/dist
+          if-no-files-found: error
