@@ -164,6 +164,7 @@ jobs:
             --headless=new \
             --no-sandbox \
             --disable-dev-shm-usage \
+            --virtual-time-budget=5000 \
             --dump-dom \
             http://127.0.0.1:4173/task5-smoke.html \
             > "$tmp_dom" 2> "$tmp_stderr"
