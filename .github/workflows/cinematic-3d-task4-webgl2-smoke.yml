@@ -73,7 +73,10 @@ jobs:
 
       - name: Build actual renderer smoke entry
         working-directory: ci-mirror/cinematic-3d-character-website
-        run: npm run build 2>&1 | tee task4-webgl2-smoke-build.log
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee task4-webgl2-smoke-build.log
 
       - name: Locate preinstalled browser
         id: browser
@@ -110,6 +113,7 @@ jobs:
           TASK4_BROWSER_PATH: ${{ steps.browser.outputs.path }}
         shell: bash
         run: |
+          set -o pipefail
           node --input-type=module <<'NODE' 2>&1 | tee task4-webgl2-smoke.log
           import fs from 'node:fs';
           import { chromium } from '@playwright/test';
