@@ -158,16 +158,22 @@ jobs:
             sleep 1
           done
           test "$ready" -eq 1
+          tmp_dom="$RUNNER_TEMP/task5-browser-smoke.html"
+          tmp_stderr="$RUNNER_TEMP/task5-browser-stderr.log"
           "$BROWSER" \
             --headless=new \
             --no-sandbox \
             --disable-dev-shm-usage \
             --dump-dom \
             http://127.0.0.1:4173/task5-smoke.html \
-            > task5-browser-smoke.html 2> task5-browser-stderr.log
-          grep -q 'data-task5="pass"' task5-browser-smoke.html
-          grep -q '"assetId":"khronos-box-nonfinal-loader-fixture"' task5-browser-smoke.html
-          grep -q '"finalAsset":false' task5-browser-smoke.html
+            > "$tmp_dom" 2> "$tmp_stderr"
+          grep -q 'data-task5="pass"' "$tmp_dom"
+          grep -q '"assetId":"khronos-box-nonfinal-loader-fixture"' "$tmp_dom"
+          grep -q '"finalAsset":false' "$tmp_dom"
+          cleanup
+          trap - EXIT
+          cp "$tmp_dom" task5-browser-smoke.html
+          cp "$tmp_stderr" task5-browser-stderr.log
           printf '{"runtime_loader_smoke":"pass","fixture":"khronos-box-nonfinal-loader-fixture","finalAsset":false}\n' > task5-runtime-result.json
 
       - name: Record environment and final result
