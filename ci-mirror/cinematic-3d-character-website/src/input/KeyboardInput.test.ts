@@ -30,6 +30,13 @@ describe('KeyboardInput', () => {
 
     key('keydown', 'ArrowUp');
     expect(input.snapshot().held.moveForward).toBe(true);
+
+    key('keydown', 'KeyW');
+    key('keyup', 'ArrowUp');
+    expect(input.snapshot().held.moveForward).toBe(true);
+
+    key('keyup', 'KeyW');
+    expect(input.snapshot().held.moveForward).toBe(false);
   });
 
   it('emits primaryAction as a single press edge instead of held input', () => {
