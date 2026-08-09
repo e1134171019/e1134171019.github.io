@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import type { WebGLRenderer, WebGLRendererParameters } from 'three';
+import { Scene, type WebGLRenderer, type WebGLRendererParameters } from 'three';
+import { addCharacterReadabilityLighting } from './Lighting';
 import {
   assertWebGL2Available,
   createRendererHandle,
@@ -97,5 +98,22 @@ describe('renderer bootstrap lifecycle', () => {
         message: 'renderer_initialization_failed',
       });
     }
+  });
+});
+
+
+describe('character readability lighting', () => {
+  it('adds a bounded neutral key/fill/rim lighting rig as a separate scene responsibility', () => {
+    const scene = new Scene();
+    const rig = addCharacterReadabilityLighting(scene);
+
+    expect(rig.name).toBe('character-readability-lighting');
+    expect(scene.children).toContain(rig);
+    expect(rig.children.map((child) => child.name)).toEqual([
+      'character-key-light',
+      'character-fill-light',
+      'character-rim-light',
+    ]);
+    expect(rig.children.every((child) => child.type === 'DirectionalLight')).toBe(true);
   });
 });
