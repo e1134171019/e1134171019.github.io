@@ -1,0 +1,56 @@
+name: cinematic-3d-bootstrap-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+  workflow_dispatch:
+
+jobs:
+  first-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Run first RED test and verify intended failure
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set +e
+          npm test -- src/state/state.test.ts 2>&1 | tee red-test.log
+          test_exit=${PIPESTATUS[0]}
+          set -e
+          if [ "$test_exit" -eq 0 ]; then
+            echo "Expected RED test to fail, but it passed."
+            exit 1
+          fi
+          if ! grep -q "RuntimeContracts" red-test.log; then
+            echo "RED failure did not reference missing RuntimeContracts; refusing false RED evidence."
+            exit 1
+          fi
+          printf '{"expectedRed":true,"testExit":%s,"reason":"RuntimeContracts missing by design"}\n' "$test_exit" > red-result.json
+
+      - name: Upload bootstrap evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-bootstrap-red-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/package-lock.json
+            ci-mirror/cinematic-3d-character-website/red-test.log
+            ci-mirror/cinematic-3d-character-website/red-result.json
+          if-no-files-found: error
