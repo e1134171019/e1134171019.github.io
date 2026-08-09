@@ -1,12 +1,6 @@
 name: cinematic-3d-task6-character-red
 
 on:
-  push:
-    branches:
-      - runtime-bootstrap/cinematic-3d
-    paths:
-      - 'ci-mirror/cinematic-3d-character-website/src/character/CharacterController.test.ts'
-      - '.github/workflows/cinematic-3d-task6-character-red.yml'
   workflow_dispatch:
 
 jobs:
