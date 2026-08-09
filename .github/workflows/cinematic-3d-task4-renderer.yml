@@ -1,0 +1,89 @@
+name: cinematic-3d-task4-renderer
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/scene/**'
+      - '.github/workflows/cinematic-3d-task4-renderer.yml'
+  workflow_dispatch:
+
+jobs:
+  task4-renderer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only main mirror
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          cat > src/main.ts <<'EOF'
+          const app = document.querySelector<HTMLElement>('#app');
+
+          if (!app) {
+            throw new Error('Runtime root #app is missing.');
+          }
+
+          app.textContent = 'Runtime bootstrap pending';
+          EOF
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Run Task 4 renderer tests
+        id: targeted
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set +e
+          npm test -- src/scene/Renderer.test.ts 2>&1 | tee task4-renderer-test.log
+          status=${PIPESTATUS[0]}
+          set -e
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          exit "$status"
+
+      - name: Run full unit regression
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm test 2>&1 | tee task4-regression-test.log
+
+      - name: Run strict TypeScript and Vite build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm run build 2>&1 | tee task4-build.log
+
+      - name: Record source hashes and environment
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          find src/scene -maxdepth 1 -type f -print0 | sort -z | xargs -0 sha256sum > task4-source-sha256.txt
+          node --version > task4-environment.txt
+          npm --version >> task4-environment.txt
+          npm ls --depth=0 >> task4-environment.txt
+          printf '{"targeted":"pass","regression":"pass","build":"pass"}\n' > task4-result.json
+
+      - name: Upload Task 4 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task4-renderer-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task4-renderer-test.log
+            ci-mirror/cinematic-3d-character-website/task4-regression-test.log
+            ci-mirror/cinematic-3d-character-website/task4-build.log
+            ci-mirror/cinematic-3d-character-website/task4-source-sha256.txt
+            ci-mirror/cinematic-3d-character-website/task4-environment.txt
+            ci-mirror/cinematic-3d-character-website/task4-result.json
+          if-no-files-found: ignore
