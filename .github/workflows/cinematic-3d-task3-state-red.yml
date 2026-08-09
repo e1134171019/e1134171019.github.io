@@ -1,9 +1,6 @@
 name: cinematic-3d-task3-state-red
 
 on:
-  push:
-    branches:
-      - runtime-bootstrap/cinematic-3d
   workflow_dispatch:
 
 jobs:
