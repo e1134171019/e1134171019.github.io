@@ -1,0 +1,46 @@
+name: cinematic-3d-task5-asset-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/assets/**'
+      - '.github/workflows/cinematic-3d-task5-asset-red.yml'
+  workflow_dispatch:
+
+jobs:
+  task5-asset-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Run Task 5 RED contract
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/assets/AssetLoader.test.ts 2>&1 | tee task5-asset-red.log
+
+      - name: Upload Task 5 RED evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task5-asset-red-evidence
+          path: ci-mirror/cinematic-3d-character-website/task5-asset-red.log
+          if-no-files-found: ignore
