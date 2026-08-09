@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { Scene, type WebGLRenderer, type WebGLRendererParameters } from 'three';
+import { createCharacterEnvironment } from './Environment';
 import { addCharacterReadabilityLighting } from './Lighting';
 import {
   assertWebGL2Available,
@@ -115,5 +116,19 @@ describe('character readability lighting', () => {
       'character-rim-light',
     ]);
     expect(rig.children.every((child) => child.type === 'DirectionalLight')).toBe(true);
+  });
+});
+
+
+describe('minimal character environment', () => {
+  it('adds only a subdued background and named ground plane baseline', () => {
+    const scene = new Scene();
+    const environment = createCharacterEnvironment(scene);
+
+    expect(scene.background?.isColor).toBe(true);
+    expect(environment.ground.name).toBe('character-ground');
+    expect(environment.ground.geometry.type).toBe('PlaneGeometry');
+    expect(environment.ground.rotation.x).toBeCloseTo(-Math.PI / 2);
+    expect(scene.children).toEqual([environment.ground]);
   });
 });
