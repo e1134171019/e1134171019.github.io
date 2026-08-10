@@ -1,12 +1,6 @@
 name: cinematic-3d-task10-ui-red
 
 on:
-  push:
-    branches:
-      - runtime-bootstrap/cinematic-3d
-    paths:
-      - 'ci-mirror/cinematic-3d-character-website/src/ui/RuntimeOverlay.test.ts'
-      - '.github/workflows/cinematic-3d-task10-ui-red.yml'
   workflow_dispatch:
 
 jobs:
