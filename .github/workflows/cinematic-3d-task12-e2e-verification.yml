@@ -7,6 +7,7 @@ on:
     paths:
       - 'ci-mirror/cinematic-3d-character-website/src/app/RuntimeApp.ts'
       - 'ci-mirror/cinematic-3d-character-website/src/main.ts'
+      - 'ci-mirror/cinematic-3d-character-website/vite.config.ts'
       - 'ci-mirror/cinematic-3d-character-website/playwright.config.ts'
       - 'ci-mirror/cinematic-3d-character-website/tests/e2e/**'
       - '.github/workflows/cinematic-3d-task12-e2e-verification.yml'
@@ -44,6 +45,7 @@ jobs:
           cat > task12-source-hashes.expected <<'EOF'
           ff78ee14ebde4bacc14df3028431819a88c5d84d78e48e1fd8c85dd7e1220006  src/app/RuntimeApp.ts
           76be4f1c00f4106bac1e1f5fa89564b5b0e58e4d05c1d92e4074220d556aff84  src/main.ts
+          a1cf9e1c032df4b61428a2a5be68e322683f87e3455d679a7d4602fe81cee20c  vite.config.ts
           ad5f52521add6c5bce07dfce16fce7981f4f3dddfaaebd398679c2149ab3eb88  playwright.config.ts
           192d97a95fd0acf940f48fe27a64e782564089e14a947de4e0f4e3465988fd01  tests/e2e/runtime.spec.ts
           57677cd671f97b86d94d1c4a2bd333dbb89b63d08c51ba814041a19921243134  tests/e2e/focus-loss.spec.ts
