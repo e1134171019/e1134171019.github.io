@@ -16,25 +16,45 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Inspect OpenGameArt archive format
+      - name: Verify pinned Quaternius Man in Suit GLB mirror
         run: |
           set -euo pipefail
-          url='https://opengameart.org/sites/default/files/basemesh_a1_human_yw_by_girush_2.7z'
-          curl --fail --location --retry 3 --retry-delay 2 "$url" -o /tmp/humanoid.7z
-          wc -c /tmp/humanoid.7z
-          sha256sum /tmp/humanoid.7z
-          mkdir -p /tmp/humanoid
-          7z x -y -o/tmp/humanoid /tmp/humanoid.7z >/dev/null
-          find /tmp/humanoid -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.fbx' -o -iname '*.blend' \) -printf '%s\t%p\n' | sort -n
-      - name: Inspect Poly Pizza Man in Suit page
+          url='https://raw.githubusercontent.com/schulerj89/vanta-city/a3fbd53398d6712742f34170a54cb450c90b1f80/public/assets/characters/animated-men/raze-suit.glb'
+          curl --fail --location --retry 3 --retry-delay 2 "$url" -o /tmp/man-in-suit.glb
+          test "$(wc -c < /tmp/man-in-suit.glb)" -eq 583416
+          echo '31ff1539e7a9a209d4eb1107e696d798fedc7e35d84a58bbabfdc0f1b8b73763  /tmp/man-in-suit.glb' | sha256sum --check --strict
+      - name: Parse GLB structure and animation inventory
+        shell: python
         run: |
-          set -euo pipefail
-          page='https://poly.pizza/m/mQnGoME1ez'
-          curl --fail --location --retry 3 --retry-delay 2 "$page" -o /tmp/poly.html
-          echo "html_bytes=$(wc -c < /tmp/poly.html)"
-          echo '--- static.poly.pizza references ---'
-          grep -Eo 'https?://[^"'"'"' <>]+' /tmp/poly.html | grep -E 'static\.poly\.pizza|\.glb|\.gltf|mQnGoME1ez' | sort -u || true
-          echo '--- GLB/UUID/context references ---'
-          grep -Eio '.{0,180}(mQnGoME1ez|static\.poly\.pizza|\.glb|\.gltf|download).{0,220}' /tmp/poly.html | head -n 120 || true
-          echo '--- script sources ---'
-          grep -Eo '<script[^>]+src="[^"]+"' /tmp/poly.html | sed -E 's/.*src="([^"]+)".*/\1/' | sort -u || true
+          import json, pathlib, struct
+          p = pathlib.Path('/tmp/man-in-suit.glb')
+          data = p.read_bytes()
+          assert data[:4] == b'glTF'
+          assert struct.unpack_from('<I', data, 4)[0] == 2
+          total = struct.unpack_from('<I', data, 8)[0]
+          assert total == len(data)
+          offset = 12
+          json_doc = None
+          while offset < len(data):
+              chunk_len, chunk_type = struct.unpack_from('<II', data, offset)
+              offset += 8
+              chunk = data[offset:offset + chunk_len]
+              offset += chunk_len
+              if chunk_type == 0x4E4F534A:
+                  json_doc = json.loads(chunk.decode('utf-8').rstrip(' \t\r\n\x00'))
+          assert json_doc is not None
+          names = [a.get('name', '') for a in json_doc.get('animations', [])]
+          print('bytes', len(data))
+          print('nodes', len(json_doc.get('nodes', [])))
+          print('meshes', len(json_doc.get('meshes', [])))
+          print('skins', len(json_doc.get('skins', [])))
+          print('materials', len(json_doc.get('materials', [])))
+          print('textures', len(json_doc.get('textures', [])))
+          print('animations', len(names))
+          for name in names:
+              print('clip', repr(name))
+          assert len(json_doc.get('skins', [])) >= 1
+          assert len(names) == 11
+          assert any('Idle' in n for n in names)
+          assert any('Walk' in n for n in names)
+          assert any('Punch' in n for n in names)
