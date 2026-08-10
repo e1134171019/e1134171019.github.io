@@ -1,0 +1,101 @@
+name: cinematic-3d-task125-recovery-package
+
+on:
+  push:
+    branches:
+      - runtime-recovery/task12-5-package
+    paths:
+      - '.github/workflows/cinematic-3d-task125-recovery-package.yml'
+  workflow_dispatch:
+
+jobs:
+  recover:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout recovery branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Export verified Task 12 baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/task12-baseline recovery/task12-5-final
+          git cat-file -e 0770cf38f1ee5abb775d5c5b2ce7d2ba70e4d33b^{commit}
+          git archive 0770cf38f1ee5abb775d5c5b2ce7d2ba70e4d33b -- ci-mirror/cinematic-3d-character-website \
+            | tar -x -C recovery/task12-baseline --strip-components=2
+          cat > recovery/task12-baseline-hashes.expected <<'EOF'
+          ff78ee14ebde4bacc14df3028431819a88c5d84d78e48e1fd8c85dd7e1220006  src/app/RuntimeApp.ts
+          76be4f1c00f4106bac1e1f5fa89564b5b0e58e4d05c1d92e4074220d556aff84  src/main.ts
+          a1cf9e1c032df4b61428a2a5be68e322683f87e3455d679a7d4602fe81cee20c  vite.config.ts
+          ad5f52521add6c5bce07dfce16fce7981f4f3dddfaaebd398679c2149ab3eb88  playwright.config.ts
+          192d97a95fd0acf940f48fe27a64e782564089e14a947de4e0f4e3465988fd01  tests/e2e/runtime.spec.ts
+          57677cd671f97b86d94d1c4a2bd333dbb89b63d08c51ba814041a19921243134  tests/e2e/focus-loss.spec.ts
+          f9ab9ed47cb44be444b9bf0c97b52c0fd8dd0b51e7953e6c1527ed3441d69b77  tests/e2e/fallback.spec.ts
+          EOF
+          (cd recovery/task12-baseline && sha256sum -c ../task12-baseline-hashes.expected) | tee recovery/task12-baseline-hash-check.log
+
+      - name: Restore pinned nonfinal fixture
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p recovery/task12-baseline/public/assets
+          curl -fsSL 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf/Models/Box/glTF-Binary/Box.glb' \
+            -o recovery/task12-baseline/public/assets/test-character.glb
+          echo 'ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e  recovery/task12-baseline/public/assets/test-character.glb' \
+            | sha256sum -c - | tee recovery/task12-asset-hash.log
+
+      - name: Construct Task 12.5 final workspace from baseline only
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a recovery/task12-baseline/. recovery/task12-5-final/
+          cp ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.ts recovery/task12-5-final/src/character/AnimationCoordinator.ts
+          cp ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.test.ts recovery/task12-5-final/src/character/AnimationCoordinator.test.ts
+          cp ci-mirror/cinematic-3d-character-website/tests/e2e/runtime.spec.ts recovery/task12-5-final/tests/e2e/runtime.spec.ts
+          cp ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch /tmp/task125-runtimeapp.patch
+          (cd recovery/task12-5-final && git apply --check /tmp/task125-runtimeapp.patch && git apply /tmp/task125-runtimeapp.patch)
+          cat > recovery/task12-5-final-hashes.expected <<'EOF'
+          3d93e46f2a0e9f563e9c85e6104d241b072c5501cae17a39ac7db5f7d3d5521b  src/character/AnimationCoordinator.ts
+          4033f911a90d5482b26598eccb6bb1226e6841dea39dd7c9a35d7aa1dc2408d9  src/character/AnimationCoordinator.test.ts
+          ab754fbd6764f4c55a5f13913956935dbea1dd902c5587853825fff3eb25b7d0  src/app/RuntimeApp.ts
+          fb5b81c831d8305f0cef651a9bd29e7d5da423658985a9cc517586afe01e67ac  src/app/RuntimeApp.test.ts
+          2e08e7c97b51a55978ba8b8ef0b085d5758bd84e095537f1720e06ce6f88bae5  tests/e2e/runtime.spec.ts
+          EOF
+          (cd recovery/task12-5-final && sha256sum -c ../task12-5-final-hashes.expected) | tee recovery/task12-5-final-hash-check.log
+          git diff --no-index -- recovery/task12-baseline recovery/task12-5-final > recovery/task12-to-task125.diff || test $? -eq 1
+
+      - name: Package recovery archives
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd recovery/task12-baseline && zip -qr ../task12-baseline.zip .)
+          (cd recovery/task12-5-final && zip -qr ../task12-5-final.zip .)
+          sha256sum recovery/task12-baseline.zip recovery/task12-5-final.zip > recovery/archive-sha256.txt
+          cat > recovery/recovery-manifest.txt <<'EOF'
+          recovery_mode=verified_task12_baseline_plus_task12_5_overlay
+          task12_mirror_commit=0770cf38f1ee5abb775d5c5b2ce7d2ba70e4d33b
+          executor_mirror_only=true
+          source_ssot_promoted=false
+          final_asset=false
+          equivalent_to_final=false
+          EOF
+
+      - name: Upload recovery package
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task125-recovery-package
+          path: |
+            recovery/task12-baseline.zip
+            recovery/task12-5-final.zip
+            recovery/archive-sha256.txt
+            recovery/recovery-manifest.txt
+            recovery/task12-baseline-hashes.expected
+            recovery/task12-baseline-hash-check.log
+            recovery/task12-asset-hash.log
+            recovery/task12-5-final-hashes.expected
+            recovery/task12-5-final-hash-check.log
+            recovery/task12-to-task125.diff
+          if-no-files-found: error
