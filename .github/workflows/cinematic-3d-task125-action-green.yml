@@ -25,13 +25,12 @@ jobs:
           node-version: '22'
 
       - name: Apply formal RuntimeApp patch
-        working-directory: ci-mirror/cinematic-3d-character-website
         shell: bash
         run: |
           set -euo pipefail
-          git apply --check task125-runtimeapp.patch
-          git apply task125-runtimeapp.patch
-          git diff --check
+          git apply --check --directory=ci-mirror/cinematic-3d-character-website ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch
+          git apply --directory=ci-mirror/cinematic-3d-character-website ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch
+          git diff --check -- ci-mirror/cinematic-3d-character-website/src/app/RuntimeApp.ts ci-mirror/cinematic-3d-character-website/src/app/RuntimeApp.test.ts
 
       - name: Capture and verify formal Task 12.5 source hashes
         working-directory: ci-mirror/cinematic-3d-character-website
