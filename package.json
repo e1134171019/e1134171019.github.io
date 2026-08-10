@@ -4,7 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "scripts": {
+    "predev": "node tools/materialize-open-source-character.mjs",
     "dev": "vite",
+    "prebuild": "node tools/materialize-open-source-character.mjs",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run",
     "test:watch": "vitest",
