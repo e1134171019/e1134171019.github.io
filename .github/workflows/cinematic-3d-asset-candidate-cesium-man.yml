@@ -1,0 +1,83 @@
+name: Cinematic 3D Asset Candidate - CesiumMan
+
+on:
+  push:
+    branches:
+      - asset-integration/cesium-man-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  acquire-verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Acquire exact upstream GLB and verify provenance
+        shell: python
+        run: |
+          import hashlib
+          import json
+          import pathlib
+          import struct
+          import urllib.request
+
+          source_url = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf/Models/CesiumMan/glTF-Binary/CesiumMan.glb"
+          expected_size = 438044
+          expected_git_blob_sha1 = "8586c4e6a59bf8ef585c2a685c50a80d28503216"
+
+          out_dir = pathlib.Path("asset-candidate")
+          out_dir.mkdir(parents=True, exist_ok=True)
+          glb_path = out_dir / "CesiumMan.glb"
+          urllib.request.urlretrieve(source_url, glb_path)
+          data = glb_path.read_bytes()
+
+          size = len(data)
+          sha256 = hashlib.sha256(data).hexdigest()
+          git_blob_sha1 = hashlib.sha1(f"blob {size}\0".encode() + data).hexdigest()
+
+          if size != expected_size:
+              raise SystemExit(f"size mismatch: {size} != {expected_size}")
+          if git_blob_sha1 != expected_git_blob_sha1:
+              raise SystemExit(f"git blob sha1 mismatch: {git_blob_sha1} != {expected_git_blob_sha1}")
+
+          if data[:4] != b"glTF":
+              raise SystemExit("invalid GLB magic")
+          version, total_length = struct.unpack_from("<II", data, 4)
+          if version != 2 or total_length != size:
+              raise SystemExit(f"invalid GLB header: version={version}, length={total_length}, size={size}")
+
+          json_length, json_type = struct.unpack_from("<II", data, 12)
+          if json_type != 0x4E4F534A:
+              raise SystemExit("first GLB chunk is not JSON")
+          doc = json.loads(data[20:20 + json_length].decode("utf-8").rstrip(" \t\r\n\x00"))
+
+          report = {
+              "asset": "CesiumMan",
+              "source_url": source_url,
+              "source_repository_commit": "2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf",
+              "source_blob_sha1": git_blob_sha1,
+              "byte_length": size,
+              "sha256": sha256,
+              "gltf_version": doc.get("asset", {}).get("version"),
+              "generator": doc.get("asset", {}).get("generator"),
+              "scene_count": len(doc.get("scenes", [])),
+              "node_count": len(doc.get("nodes", [])),
+              "mesh_count": len(doc.get("meshes", [])),
+              "skin_count": len(doc.get("skins", [])),
+              "animation_count": len(doc.get("animations", [])),
+              "animation_names": [a.get("name") for a in doc.get("animations", [])],
+              "material_count": len(doc.get("materials", [])),
+              "texture_count": len(doc.get("textures", [])),
+              "image_count": len(doc.get("images", [])),
+          }
+          (out_dir / "asset-report.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+          print(json.dumps(report, indent=2))
+
+      - name: Upload verified asset candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-man-verified-candidate
+          path: asset-candidate/
+          if-no-files-found: error
+          retention-days: 7
