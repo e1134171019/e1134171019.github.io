@@ -56,7 +56,8 @@ jobs:
           cp ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.test.ts recovery/task12-5-final/src/character/AnimationCoordinator.test.ts
           cp ci-mirror/cinematic-3d-character-website/tests/e2e/runtime.spec.ts recovery/task12-5-final/tests/e2e/runtime.spec.ts
           cp ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch /tmp/task125-runtimeapp.patch
-          (cd recovery/task12-5-final && git apply --check /tmp/task125-runtimeapp.patch && git apply /tmp/task125-runtimeapp.patch)
+          git apply --check --directory=recovery/task12-5-final /tmp/task125-runtimeapp.patch
+          git apply --directory=recovery/task12-5-final /tmp/task125-runtimeapp.patch
           cat > recovery/task12-5-final-hashes.expected <<'EOF'
           3d93e46f2a0e9f563e9c85e6104d241b072c5501cae17a39ac7db5f7d3d5521b  src/character/AnimationCoordinator.ts
           4033f911a90d5482b26598eccb6bb1226e6841dea39dd7c9a35d7aa1dc2408d9  src/character/AnimationCoordinator.test.ts
