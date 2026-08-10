@@ -1,0 +1,77 @@
+name: cinematic-3d-task9-quality
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/quality/PerformanceMonitor.ts'
+      - 'ci-mirror/cinematic-3d-character-website/src/quality/QualityPolicy.ts'
+      - 'ci-mirror/cinematic-3d-character-website/src/quality/QualityPolicy.test.ts'
+      - '.github/workflows/cinematic-3d-task9-quality.yml'
+  workflow_dispatch:
+
+jobs:
+  task9-quality-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Verify Task 9 source identities
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '13725778ec4888bf72e90e6d70216da0bb9ec22a8e2e521638e4a3f585909a8c  src/quality/PerformanceMonitor.ts'
+            echo '8150de7533f1c82a07f5fb590315b22bb30d71dedd81b9aa0355962af3b3a5f6  src/quality/QualityPolicy.ts'
+            echo '2231cab51621f488adf36c50c162e0d16ca0518383f7489b76f50c71ee66cec1  src/quality/QualityPolicy.test.ts'
+          } | sha256sum -c - | tee task9-source-hash-check.log
+
+      - name: Run Task 9 targeted tests
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test -- src/quality/QualityPolicy.test.ts 2>&1 | tee task9-targeted.log
+
+      - name: Run full unit regression
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm test 2>&1 | tee task9-full-regression.log
+
+      - name: Run strict TypeScript and Vite build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          npm run build 2>&1 | tee task9-build.log
+
+      - name: Upload Task 9 GREEN evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task9-quality-green-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task9-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task9-targeted.log
+            ci-mirror/cinematic-3d-character-website/task9-full-regression.log
+            ci-mirror/cinematic-3d-character-website/task9-build.log
+          if-no-files-found: ignore
