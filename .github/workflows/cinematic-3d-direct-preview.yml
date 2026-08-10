@@ -12,18 +12,17 @@ jobs:
   build-static-preview:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout exact source carrier
+      - name: Checkout builder branch
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 3
 
-      - name: Verify source carrier ancestry
+      - name: Fetch exact fixed source carrier
         run: |
-          test "$(git rev-parse HEAD^^^)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
+          git fetch --no-tags origin bf5ba41951b7d37c588ebd7abc0944a856782b2c --depth=1
+          test "$(git rev-parse FETCH_HEAD)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
 
       - name: Verify runtime source unchanged from carrier
         run: |
-          git diff --exit-code bf5ba41951b7d37c588ebd7abc0944a856782b2c -- src public package.json tsconfig.json vite.config.ts index.html
+          git diff --exit-code FETCH_HEAD -- src public package.json tsconfig.json vite.config.ts index.html
 
       - name: Setup Node
         uses: actions/setup-node@v4
