@@ -89,11 +89,12 @@ function baseDecision(
     currentLevel,
     characterFidelityProtected: true,
     primaryTargetMet:
-      snapshot.medianFps !== null && snapshot.medianFps >= config.primaryTargetFps,
+      snapshot.medianFrameTimeMs !== null &&
+      snapshot.medianFrameTimeMs <= 1000 / config.primaryTargetFps,
     minimumInteractiveFloorMet:
-      snapshot.medianFps === null
+      snapshot.medianFrameTimeMs === null
         ? null
-        : snapshot.medianFps >= config.minimumInteractiveFps,
+        : snapshot.medianFrameTimeMs <= 1000 / config.minimumInteractiveFps,
   };
 }
 
@@ -104,9 +105,11 @@ export function evaluateQualityPolicy(
 ): QualityPolicyDecision {
   const config = validateConfig(rawConfig);
   const base = baseDecision(currentLevel, snapshot, config);
-  const recentFps = snapshot.fpsSamples.slice(-config.requiredSustainedSamples);
+  const recentFrameTimes = snapshot.frameTimesMs.slice(
+    -config.requiredSustainedSamples,
+  );
 
-  if (recentFps.length < config.requiredSustainedSamples) {
+  if (recentFrameTimes.length < config.requiredSustainedSamples) {
     return {
       ...base,
       recommendation: 'hold',
@@ -116,8 +119,9 @@ export function evaluateQualityPolicy(
     };
   }
 
-  const sustainedBelowTrigger = recentFps.every(
-    (fps) => fps < config.degradationTriggerFps,
+  const degradationFrameTimeMs = 1000 / config.degradationTriggerFps;
+  const sustainedBelowTrigger = recentFrameTimes.every(
+    (frameTimeMs) => frameTimeMs > degradationFrameTimeMs,
   );
 
   if (base.minimumInteractiveFloorMet === false) {
