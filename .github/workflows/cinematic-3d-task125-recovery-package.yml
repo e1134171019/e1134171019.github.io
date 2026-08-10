@@ -18,14 +18,13 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Export complete local-source snapshot
+      - name: Export verified Task 12 source baseline
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p recovery/formal-snapshot recovery/task12-5-final
-          git cat-file -e bf5ba41951b7d37c588ebd7abc0944a856782b2c^{commit}
-          git archive bf5ba41951b7d37c588ebd7abc0944a856782b2c \
-            | tar -x -C recovery/formal-snapshot
+          mkdir -p recovery/task12-baseline recovery/project-docs recovery/task12-5-final
+          git archive 0770cf38f1ee5abb775d5c5b2ce7d2ba70e4d33b -- ci-mirror/cinematic-3d-character-website \
+            | tar -x -C recovery/task12-baseline --strip-components=2
           cat > recovery/task12-baseline-hashes.expected <<'EOF'
           ff78ee14ebde4bacc14df3028431819a88c5d84d78e48e1fd8c85dd7e1220006  src/app/RuntimeApp.ts
           76be4f1c00f4106bac1e1f5fa89564b5b0e58e4d05c1d92e4074220d556aff84  src/main.ts
@@ -35,16 +34,29 @@ jobs:
           57677cd671f97b86d94d1c4a2bd333dbb89b63d08c51ba814041a19921243134  tests/e2e/focus-loss.spec.ts
           f9ab9ed47cb44be444b9bf0c97b52c0fd8dd0b51e7953e6c1527ed3441d69b77  tests/e2e/fallback.spec.ts
           EOF
-          (cd recovery/formal-snapshot && sha256sum -c ../task12-baseline-hashes.expected) | tee recovery/formal-snapshot-hash-check.log
-          echo 'ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e  recovery/formal-snapshot/public/assets/test-character.glb' \
-            | sha256sum -c - | tee recovery/task12-asset-hash.log
-          test -f recovery/formal-snapshot/docs/superpowers/specs/2026-08-10-action-completion-e2e-closure-design.md
+          (cd recovery/task12-baseline && sha256sum -c ../task12-baseline-hashes.expected) | tee recovery/task12-baseline-hash-check.log
 
-      - name: Construct Task 12.5 final workspace from verified snapshot
+      - name: Restore pinned nonfinal fixture and project documents
         shell: bash
         run: |
           set -euo pipefail
-          cp -a recovery/formal-snapshot/. recovery/task12-5-final/
+          mkdir -p recovery/task12-baseline/public/assets
+          curl -fsSL 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf/Models/Box/glTF-Binary/Box.glb' \
+            -o recovery/task12-baseline/public/assets/test-character.glb
+          echo 'ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e  recovery/task12-baseline/public/assets/test-character.glb' \
+            | sha256sum -c - | tee recovery/task12-asset-hash.log
+          git archive bf5ba41951b7d37c588ebd7abc0944a856782b2c -- docs .gitignore \
+            | tar -x -C recovery/project-docs
+          test -f recovery/project-docs/docs/superpowers/specs/2026-08-10-action-completion-e2e-closure-design.md
+          find recovery/project-docs/docs -type f | sort > recovery/project-docs-files.txt
+
+      - name: Construct Task 12.5 final workspace
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp -a recovery/task12-baseline/. recovery/task12-5-final/
+          cp -a recovery/project-docs/docs recovery/task12-5-final/docs
+          cp recovery/project-docs/.gitignore recovery/task12-5-final/.gitignore
           cp ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.ts recovery/task12-5-final/src/character/AnimationCoordinator.ts
           cp ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.test.ts recovery/task12-5-final/src/character/AnimationCoordinator.test.ts
           cp ci-mirror/cinematic-3d-character-website/tests/e2e/runtime.spec.ts recovery/task12-5-final/tests/e2e/runtime.spec.ts
@@ -59,21 +71,19 @@ jobs:
           2e08e7c97b51a55978ba8b8ef0b085d5758bd84e095537f1720e06ce6f88bae5  tests/e2e/runtime.spec.ts
           EOF
           (cd recovery/task12-5-final && sha256sum -c ../task12-5-final-hashes.expected) | tee recovery/task12-5-final-hash-check.log
-          git diff --no-index -- recovery/formal-snapshot recovery/task12-5-final > recovery/task12-to-task125.diff || test $? -eq 1
+          test -f recovery/task12-5-final/docs/superpowers/specs/2026-08-10-action-completion-e2e-closure-design.md
 
-      - name: Package recovery archives
+      - name: Package recovery archive
         shell: bash
         run: |
           set -euo pipefail
-          (cd recovery/formal-snapshot && zip -qr ../formal-snapshot.zip .)
-          (cd recovery/task12-5-final && zip -qr ../task12-5-final.zip .)
-          sha256sum recovery/formal-snapshot.zip recovery/task12-5-final.zip > recovery/archive-sha256.txt
+          (cd recovery/task12-5-final && zip -qr ../task12-5-final-complete.zip .)
+          sha256sum recovery/task12-5-final-complete.zip > recovery/archive-sha256.txt
           cat > recovery/recovery-manifest.txt <<'EOF'
-          recovery_mode=complete_local_snapshot_plus_verified_task12_5_overlay
-          local_snapshot_branch=project/cinematic-3d-character-website
-          local_snapshot_commit=bf5ba41951b7d37c588ebd7abc0944a856782b2c
-          local_source_commit_recorded_by_snapshot=27bd1471fa68f02ed348cced2cd1f664f594d9e1
-          task12_executor_mirror_commit=0770cf38f1ee5abb775d5c5b2ce7d2ba70e4d33b
+          recovery_mode=verified_task12_source_plus_task12_5_overlay_plus_document_snapshot
+          task12_source_commit=0770cf38f1ee5abb775d5c5b2ce7d2ba70e4d33b
+          document_snapshot_commit=bf5ba41951b7d37c588ebd7abc0944a856782b2c
+          document_snapshot_local_source_commit_record=27bd1471fa68f02ed348cced2cd1f664f594d9e1
           executor_mirror_only=true
           source_ssot_promoted=false
           final_asset=false
@@ -83,16 +93,15 @@ jobs:
       - name: Upload recovery package
         uses: actions/upload-artifact@v4
         with:
-          name: cinematic-3d-task125-full-recovery-package
+          name: cinematic-3d-task125-complete-recovery-package
           path: |
-            recovery/formal-snapshot.zip
-            recovery/task12-5-final.zip
+            recovery/task12-5-final-complete.zip
             recovery/archive-sha256.txt
             recovery/recovery-manifest.txt
             recovery/task12-baseline-hashes.expected
-            recovery/formal-snapshot-hash-check.log
+            recovery/task12-baseline-hash-check.log
             recovery/task12-asset-hash.log
             recovery/task12-5-final-hashes.expected
             recovery/task12-5-final-hash-check.log
-            recovery/task12-to-task125.diff
+            recovery/project-docs-files.txt
           if-no-files-found: error
