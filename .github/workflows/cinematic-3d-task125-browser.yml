@@ -1,0 +1,96 @@
+name: cinematic-3d-task125-browser
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.ts'
+      - 'ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.test.ts'
+      - 'ci-mirror/cinematic-3d-character-website/tests/e2e/runtime.spec.ts'
+      - 'ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch'
+      - '.github/workflows/cinematic-3d-task125-browser.yml'
+  workflow_dispatch:
+
+jobs:
+  task125-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply formal RuntimeApp patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check --directory=ci-mirror/cinematic-3d-character-website ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch
+          git apply --directory=ci-mirror/cinematic-3d-character-website ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch
+
+      - name: Verify formal Task 12.5 browser source hashes
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > task125-browser-source-hashes.expected <<'EOF'
+          3d93e46f2a0e9f563e9c85e6104d241b072c5501cae17a39ac7db5f7d3d5521b  src/character/AnimationCoordinator.ts
+          ab754fbd6764f4c55a5f13913956935dbea1dd902c5587853825fff3eb25b7d0  src/app/RuntimeApp.ts
+          2e08e7c97b51a55978ba8b8ef0b085d5758bd84e095537f1720e06ce6f88bae5  tests/e2e/runtime.spec.ts
+          EOF
+          sha256sum -c task125-browser-source-hashes.expected | tee task125-browser-source-hashes.log
+
+      - name: Restore verified nonfinal zero-animation fixture
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/assets
+          curl -fsSL 'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf/Models/Box/glTF-Binary/Box.glb' -o public/assets/test-character.glb
+          echo 'ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e  public/assets/test-character.glb' | sha256sum -c - | tee task125-browser-asset-hash.log
+
+      - name: Install project dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --ignore-scripts
+
+      - name: Install supported Playwright browsers
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npx playwright install --with-deps chromium webkit
+
+      - name: Run Chromium action-completion E2E
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npx playwright test tests/e2e/runtime.spec.ts --project=chromium 2>&1 | tee task125-chromium.log
+
+      - name: Run WebKit action-completion E2E
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npx playwright test tests/e2e/runtime.spec.ts --project=webkit 2>&1 | tee task125-webkit.log
+
+      - name: Record browser result
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: printf '{"chromium":"pass","webkit":"pass","zero_clip_fallback_completion":"pass","held_forward_completion":"pass"}\n' > task125-browser-result.json
+
+      - name: Upload Task 12.5 browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task125-browser-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task125-browser-source-hashes.expected
+            ci-mirror/cinematic-3d-character-website/task125-browser-source-hashes.log
+            ci-mirror/cinematic-3d-character-website/task125-browser-asset-hash.log
+            ci-mirror/cinematic-3d-character-website/task125-chromium.log
+            ci-mirror/cinematic-3d-character-website/task125-webkit.log
+            ci-mirror/cinematic-3d-character-website/task125-browser-result.json
+            ci-mirror/cinematic-3d-character-website/test-results
+            ci-mirror/cinematic-3d-character-website/playwright-report
+          if-no-files-found: ignore
