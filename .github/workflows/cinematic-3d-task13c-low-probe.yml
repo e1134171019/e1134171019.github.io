@@ -1,0 +1,28 @@
+name: cinematic-3d-task13c-low-probe
+
+on:
+  push:
+    branches:
+      - validation/task13c-low-uhd620
+
+permissions:
+  contents: write
+
+jobs:
+  probe-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout validation branch
+        uses: actions/checkout@v4
+
+      - name: Fetch exact fixed source carrier
+        run: |
+          git fetch --no-tags origin bf5ba41951b7d37c588ebd7abc0944a856782b2c --depth=1
+          test "$(git rev-parse FETCH_HEAD)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
+
+      - name: Verify production runtime source unchanged
+        run: |
+          git diff --exit-code FETCH_HEAD -- src public package.json tsconfig.json vite.config.ts index.html
+
+      - name: Run Task 13C metric contract tests
+        run: node --test tools/task13c-metrics.test.mjs
