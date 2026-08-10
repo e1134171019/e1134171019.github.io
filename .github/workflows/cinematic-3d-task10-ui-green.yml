@@ -24,11 +24,14 @@ jobs:
         with:
           node-version: '22'
 
-      - name: Generate executor-only main mirror
+      - name: Generate executor-only browser entry typings and main mirror
         working-directory: ci-mirror/cinematic-3d-character-website
         shell: bash
         run: |
           set -euo pipefail
+          cat > src/vite-env.d.ts <<'EOF'
+          /// <reference types="vite/client" />
+          EOF
           cat > src/main.ts <<'EOF'
           import './styles.css';
 
@@ -86,7 +89,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          printf '{"green":true,"task10UiTests":"pass","fullRegression":"pass","build":"pass","executorOnlyMain":true}\n' > task10-green-result.json
+          printf '{"green":true,"task10UiTests":"pass","fullRegression":"pass","build":"pass","executorOnlyMain":true,"executorOnlyViteTypes":true}\n' > task10-green-result.json
 
       - name: Upload Task 10 GREEN evidence
         if: always()
