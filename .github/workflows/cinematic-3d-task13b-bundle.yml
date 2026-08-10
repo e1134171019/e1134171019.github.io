@@ -1,0 +1,95 @@
+name: Cinematic 3D Task 13B Bundle Decision
+
+on:
+  push:
+    branches:
+      - analysis/cinematic-3d-task13b-bundle
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bundle-decision-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout analysis carrier
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Fetch fixed source carrier
+        run: git fetch origin bf5ba41951b7d37c588ebd7abc0944a856782b2c --depth=1
+
+      - name: Prove production/runtime source unchanged
+        run: |
+          git diff --exit-code bf5ba41951b7d37c588ebd7abc0944a856782b2c -- \
+            src public index.html package.json vite.config.ts playwright.config.ts
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Unit regression
+        run: npm test
+
+      - name: TypeScript verification
+        run: npx tsc --noEmit
+
+      - name: Baseline production bundle evidence
+        run: |
+          set -o pipefail
+          npx vite build --config vite.task13b.config.ts 2>&1 | tee task13b-baseline-build.log
+
+      - name: Three split experiment bundle evidence
+        env:
+          TASK13B_SPLIT: three
+        run: |
+          set -o pipefail
+          npx vite build --config vite.task13b.config.ts 2>&1 | tee task13b-split-build.log
+
+      - name: Compare baseline and split
+        run: node tools/task13b-compare.mjs | tee task13b-comparison.log
+
+      - name: Install Chromium for semantic smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Smoke baseline bundle
+        run: node tools/task13b-smoke.mjs dist-task13b-baseline 4173 baseline | tee task13b-smoke-baseline.json
+
+      - name: Smoke split experiment
+        run: node tools/task13b-smoke.mjs dist-task13b-split 4174 split-three | tee task13b-smoke-split.json
+
+      - name: Evidence summary
+        if: always()
+        run: |
+          echo '## Task 13B Bundle Decision Evidence' >> "$GITHUB_STEP_SUMMARY"
+          echo '' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Fixed source carrier: `bf5ba41951b7d37c588ebd7abc0944a856782b2c`' >> "$GITHUB_STEP_SUMMARY"
+          echo '- Analysis branch does not modify production/runtime source bytes.' >> "$GITHUB_STEP_SUMMARY"
+          if [ -f task13b-bundle-comparison.json ]; then
+            echo '```json' >> "$GITHUB_STEP_SUMMARY"
+            cat task13b-bundle-comparison.json >> "$GITHUB_STEP_SUMMARY"
+            echo '```' >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload Task 13B evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task13b-bundle-decision-evidence
+          path: |
+            task13b-baseline-build.log
+            task13b-split-build.log
+            task13b-bundle-comparison.json
+            task13b-comparison.log
+            task13b-smoke-baseline.json
+            task13b-smoke-split.json
+            dist-task13b-baseline/task13b-bundle-evidence.json
+            dist-task13b-split/task13b-bundle-evidence.json
+          if-no-files-found: warn
