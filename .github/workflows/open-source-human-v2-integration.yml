@@ -18,5 +18,5 @@ jobs:
         with:
           node-version: '24'
       - run: npm install --no-audit --no-fund
-      - name: Candidate manifest contract
-        run: npx vitest run src/assets/AssetManifest.candidate.test.ts
+      - name: Candidate and runtime transform contracts
+        run: npx vitest run src/assets/AssetManifest.candidate.test.ts src/app/RuntimeApp.test.ts
