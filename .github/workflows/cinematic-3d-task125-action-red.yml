@@ -1,0 +1,47 @@
+name: cinematic-3d-task125-action-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.test.ts'
+      - '.github/workflows/cinematic-3d-task125-action-red.yml'
+  workflow_dispatch:
+
+jobs:
+  task125-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Generate lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+      - name: Install dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+      - name: Verify formal RED test bytes
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          echo '4033f911a90d5482b26598eccb6bb1226e6841dea39dd7c9a35d7aa1dc2408d9  src/character/AnimationCoordinator.test.ts' | sha256sum -c -
+      - name: Run Task 12.5 RED behavior tests
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/character/AnimationCoordinator.test.ts 2>&1 | tee task125-red.log
+      - name: Upload RED evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task125-action-red-evidence
+          path: ci-mirror/cinematic-3d-character-website/task125-red.log
+          if-no-files-found: ignore
