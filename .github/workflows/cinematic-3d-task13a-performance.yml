@@ -1,0 +1,166 @@
+name: cinematic-3d-task13a-performance
+
+on:
+  push:
+    branches:
+      - performance-baseline/cinematic-3d-task13a
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-baseline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOURCE_CARRIER_SHA: bf5ba41951b7d37c588ebd7abc0944a856782b2c
+      LOCAL_SOURCE_SHA: 27bd1471fa68f02ed348cced2cd1f664f594d9e1
+      TASK13A_MODE: production
+      BASE_URL: http://127.0.0.1:4173
+      STABILITY_MS: '600000'
+      SCENARIO_MS: '5000'
+      OUTPUT_DIR: artifacts/task13a
+    steps:
+      - name: Checkout executor branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify source carrier bytes are unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$SOURCE_CARRIER_SHA")" = "$SOURCE_CARRIER_SHA"
+          git diff --exit-code "$SOURCE_CARRIER_SHA" -- src public index.html package.json tsconfig.json vite.config.ts playwright.config.ts tests docs/decisions/quality-performance-v1.md
+          mkdir -p "$OUTPUT_DIR"
+          {
+            echo "executor_sha=$GITHUB_SHA"
+            echo "source_carrier_sha=$SOURCE_CARRIER_SHA"
+            echo "local_source_sha=$LOCAL_SOURCE_SHA"
+            sha256sum \
+              src/app/RuntimeApp.ts \
+              src/character/AnimationCoordinator.ts \
+              src/quality/PerformanceMonitor.ts \
+              src/quality/QualityPolicy.ts \
+              src/scene/Renderer.ts \
+              public/assets/test-character.glb \
+              package.json
+          } | tee "$OUTPUT_DIR/source-identity-production.txt"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Production build
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee "$OUTPUT_DIR/build.log"
+
+      - name: Start production preview
+        shell: bash
+        run: |
+          nohup npx vite preview --host 127.0.0.1 --port 4173 > "$OUTPUT_DIR/preview.log" 2>&1 &
+          echo $! > "$OUTPUT_DIR/preview.pid"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$OUTPUT_DIR/preview.log"
+          exit 1
+
+      - name: Run production baseline and 10-minute stability
+        run: node tools/task13a-baseline.mjs
+
+      - name: Upload production evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task13a-production-evidence
+          path: artifacts/task13a
+          if-no-files-found: error
+          retention-days: 14
+
+  semantic-stability:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SOURCE_CARRIER_SHA: bf5ba41951b7d37c588ebd7abc0944a856782b2c
+      LOCAL_SOURCE_SHA: 27bd1471fa68f02ed348cced2cd1f664f594d9e1
+      TASK13A_MODE: semantic
+      BASE_URL: http://127.0.0.1:4174
+      STABILITY_MS: '600000'
+      OUTPUT_DIR: artifacts/task13a
+    steps:
+      - name: Checkout executor branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify source carrier bytes are unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$SOURCE_CARRIER_SHA")" = "$SOURCE_CARRIER_SHA"
+          git diff --exit-code "$SOURCE_CARRIER_SHA" -- src public index.html package.json tsconfig.json vite.config.ts playwright.config.ts tests docs/decisions/quality-performance-v1.md
+          mkdir -p "$OUTPUT_DIR"
+          {
+            echo "executor_sha=$GITHUB_SHA"
+            echo "source_carrier_sha=$SOURCE_CARRIER_SHA"
+            echo "local_source_sha=$LOCAL_SOURCE_SHA"
+            sha256sum \
+              src/app/RuntimeApp.ts \
+              src/character/AnimationCoordinator.ts \
+              src/quality/PerformanceMonitor.ts \
+              src/quality/QualityPolicy.ts \
+              src/scene/Renderer.ts \
+              public/assets/test-character.glb \
+              package.json
+          } | tee "$OUTPUT_DIR/source-identity-semantic.txt"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Start Vite development runtime for semantic diagnostics
+        shell: bash
+        run: |
+          nohup npx vite --host 127.0.0.1 --port 4174 > "$OUTPUT_DIR/dev-server.log" 2>&1 &
+          echo $! > "$OUTPUT_DIR/dev-server.pid"
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4174/ >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat "$OUTPUT_DIR/dev-server.log"
+          exit 1
+
+      - name: Run 10-minute semantic stability loop
+        run: node tools/task13a-baseline.mjs
+
+      - name: Upload semantic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task13a-semantic-evidence
+          path: artifacts/task13a
+          if-no-files-found: error
+          retention-days: 14
