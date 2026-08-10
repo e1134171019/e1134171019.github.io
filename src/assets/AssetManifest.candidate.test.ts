@@ -17,6 +17,10 @@ describe('OPEN_SOURCE_CHARACTER_ASSET_MANIFEST', () => {
     );
     expect(OPEN_SOURCE_CHARACTER_ASSET_MANIFEST.finalAsset).toBe(false);
     expect(OPEN_SOURCE_CHARACTER_ASSET_MANIFEST.equivalentToFinal).toBe(false);
+    expect(OPEN_SOURCE_CHARACTER_ASSET_MANIFEST.runtimeTransform).toEqual({
+      uniformScale: 0.369,
+      rotationY: Math.PI,
+    });
     expect(OPEN_SOURCE_CHARACTER_ASSET_MANIFEST.provenance.sourceOwner).toBe('Quaternius');
     expect(OPEN_SOURCE_CHARACTER_ASSET_MANIFEST.provenance.sourceRepository).toBe(
       'schulerj89/vanta-city',
