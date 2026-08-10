@@ -26,3 +26,25 @@ jobs:
 
       - name: Run Task 13C metric contract tests
         run: node --test tools/task13c-metrics.test.mjs
+
+      - name: Install project dependencies
+        run: npm install --package-lock=false
+
+      - name: Install Chromium for probe smoke
+        run: npx playwright install --with-deps chromium
+
+      - name: Build fixed runtime
+        run: npx tsc --noEmit && npx vite build --base=./
+
+      - name: Start fixed runtime preview
+        run: |
+          nohup npx vite preview --host 127.0.0.1 --port 4173 > /tmp/task13c-preview.log 2>&1 &
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          cat /tmp/task13c-preview.log
+          exit 1
+
+      - name: Run Task 13C browser probe smoke
+        run: node tools/task13c-probe.smoke.mjs
