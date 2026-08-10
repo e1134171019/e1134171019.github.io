@@ -1,0 +1,73 @@
+name: cinematic-3d-task12-e2e-red
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/playwright.config.ts'
+      - 'ci-mirror/cinematic-3d-character-website/tests/e2e/**'
+      - '.github/workflows/cinematic-3d-task12-e2e-red.yml'
+  workflow_dispatch:
+
+jobs:
+  task12-e2e-red:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Restore verified executor-only nonfinal asset
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p public/assets
+          curl -fsSL \
+            'https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf/Models/Box/glTF-Binary/Box.glb' \
+            -o public/assets/test-character.glb
+          echo 'ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e  public/assets/test-character.glb' | sha256sum -c - | tee task12-red-asset-hash.log
+
+      - name: Install project dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --ignore-scripts
+
+      - name: Install Playwright browser matrix
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Run expected-failing Task 12 E2E
+        id: red
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          npm run test:e2e 2>&1 | tee task12-red-e2e.log
+          status=${PIPESTATUS[0]}
+          echo "exit_code=$status" >> "$GITHUB_OUTPUT"
+          if [ "$status" -eq 0 ]; then
+            echo 'Task 12 RED unexpectedly passed.' | tee task12-red-contract.log
+            exit 2
+          fi
+          echo "Task 12 RED failed as expected with exit code $status." | tee task12-red-contract.log
+          exit 1
+
+      - name: Upload Task 12 RED evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task12-e2e-red-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task12-red-asset-hash.log
+            ci-mirror/cinematic-3d-character-website/task12-red-e2e.log
+            ci-mirror/cinematic-3d-character-website/task12-red-contract.log
+            ci-mirror/cinematic-3d-character-website/test-results
+            ci-mirror/cinematic-3d-character-website/playwright-report
+          if-no-files-found: ignore
