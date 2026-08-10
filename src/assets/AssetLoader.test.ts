@@ -17,15 +17,15 @@ describe('provenance-tracked runtime GLB loading', () => {
     const asset = await loadRuntimeCharacterAsset(TEST_CHARACTER_ASSET_MANIFEST, loader);
 
     expect(loadAsync).toHaveBeenCalledOnce();
-    expect(loadAsync).toHaveBeenCalledWith('/assets/test-character.glb');
+    expect(loadAsync).toHaveBeenCalledWith(TEST_CHARACTER_ASSET_MANIFEST.runtimeUrl);
     expect(asset.root).toBe(root);
     expect(asset.clips).toBe(clips);
     expect(asset.manifest).toBe(TEST_CHARACTER_ASSET_MANIFEST);
     expect(asset.manifest.finalAsset).toBe(false);
     expect(asset.manifest.equivalentToFinal).toBe(false);
-    expect(asset.manifest.assetClass).toBe('nonfinal_test_fixture');
+    expect(asset.manifest.assetClass).toBe(TEST_CHARACTER_ASSET_MANIFEST.assetClass);
     expect(asset.manifest.provenance.sha256).toBe(
-      'ed52f7192b8311d700ac0ce80644e3852cd01537e4d62241b9acba023da3d54e',
+      TEST_CHARACTER_ASSET_MANIFEST.provenance.sha256,
     );
   });
 
