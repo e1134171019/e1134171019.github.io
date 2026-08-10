@@ -6,6 +6,7 @@ import {
 } from './QualityPolicy';
 
 const POLICY: QualityPolicyConfig = {
+  primaryTargetFps: 60,
   degradationTriggerFps: 45,
   minimumInteractiveFps: 30,
   requiredSustainedSamples: 4,
