@@ -35,7 +35,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          echo 'a9366fe74495d71359d890de1f2beeca29723cfd119e15446eb8c261905e4c1e  src/quality/QualityPolicy.test.ts' | sha256sum -c - | tee task9-red-source-hash-check.log
+          echo '2231cab51621f488adf36c50c162e0d16ca0518383f7489b76f50c71ee66cec1  src/quality/QualityPolicy.test.ts' | sha256sum -c - | tee task9-red-source-hash-check.log
 
       - name: Run Task 9 RED contract
         working-directory: ci-mirror/cinematic-3d-character-website
