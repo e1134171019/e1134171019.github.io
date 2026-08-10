@@ -14,10 +14,16 @@ jobs:
     steps:
       - name: Checkout exact source carrier
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
 
       - name: Verify source carrier parent
         run: |
-          test "$(git rev-parse HEAD^)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
+          test "$(git rev-parse HEAD^)" = "8f65436480937a26563ecb8d78a69281b955b088" || test "$(git rev-parse HEAD^^)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
+
+      - name: Verify runtime source unchanged from carrier
+        run: |
+          git diff --exit-code bf5ba41951b7d37c588ebd7abc0944a856782b2c -- src public package.json tsconfig.json vite.config.ts index.html
 
       - name: Setup Node
         uses: actions/setup-node@v4
