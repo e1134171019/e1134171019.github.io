@@ -1,0 +1,67 @@
+name: cinematic-3d-task13a-warmup-diagnostic
+
+on:
+  push:
+    branches:
+      - performance-diagnostic/cinematic-3d-task13a-warmup
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warmup-diagnostic:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      SOURCE_CARRIER_SHA: bf5ba41951b7d37c588ebd7abc0944a856782b2c
+      BASE_URL: http://127.0.0.1:4175
+    steps:
+      - name: Checkout diagnostic branch
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Verify runtime source unchanged
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git merge-base HEAD "$SOURCE_CARRIER_SHA")" = "$SOURCE_CARRIER_SHA"
+          git diff --exit-code "$SOURCE_CARRIER_SHA" -- src public index.html package.json tsconfig.json vite.config.ts playwright.config.ts tests docs/decisions/quality-performance-v1.md
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Build production runtime
+        run: npm run build
+
+      - name: Start production preview
+        shell: bash
+        run: |
+          mkdir -p artifacts/task13a-diagnostic
+          nohup npx vite preview --host 127.0.0.1 --port 4175 > artifacts/task13a-diagnostic/preview.log 2>&1 &
+          for i in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:4175/ >/dev/null; then exit 0; fi
+            sleep 1
+          done
+          exit 1
+
+      - name: Run warmup diagnostic
+        run: node tools/task13a-warmup-diagnostic.mjs
+
+      - name: Upload diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: task13a-warmup-diagnostic
+          path: artifacts/task13a-diagnostic
+          if-no-files-found: error
+          retention-days: 14
