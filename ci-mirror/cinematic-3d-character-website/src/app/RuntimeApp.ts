@@ -258,6 +258,7 @@ export class RuntimeApp {
       });
       this.performanceMonitor.markInteractive(this.dependencies.now());
       this.running = true;
+      this.updateDiagnostics();
       this.updateOverlay();
       this.scheduleFrame();
     } catch (error) {
@@ -274,6 +275,7 @@ export class RuntimeApp {
 
     this.disposed = true;
     this.releaseRuntimeSideEffects();
+    this.clearDiagnostics();
     this.root.replaceChildren();
     this.root.classList.remove('runtime-app');
   }
@@ -398,7 +400,28 @@ export class RuntimeApp {
 
     const renderer = this.requireRenderer();
     renderer.renderer.render(renderer.scene, renderer.camera);
+    this.updateDiagnostics(input);
     this.updateOverlay();
+  }
+
+  private updateDiagnostics(input?: InputSnapshot): void {
+    if (!import.meta.env.DEV) {
+      return;
+    }
+
+    const heldInputs = input
+      ? Object.values(input.held).filter(Boolean).length
+      : 0;
+
+    this.root.setAttribute('data-character-runtime', '');
+    this.root.setAttribute('data-state', this.desiredState);
+    this.root.setAttribute('data-held-inputs', String(heldInputs));
+  }
+
+  private clearDiagnostics(): void {
+    this.root.removeAttribute('data-character-runtime');
+    this.root.removeAttribute('data-state');
+    this.root.removeAttribute('data-held-inputs');
   }
 
   private applyCamera(snapshot: CharacterCameraSnapshot): void {
