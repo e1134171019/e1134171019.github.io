@@ -1,0 +1,22 @@
+name: Cinematic 3D Asset Integration - CesiumMan
+
+on:
+  push:
+    branches:
+      - asset-integration/cesium-man-v1
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --no-audit --no-fund
+      - name: Candidate manifest contract
+        run: npx vitest run src/assets/AssetManifest.candidate.test.ts
