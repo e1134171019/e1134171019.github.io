@@ -33,10 +33,38 @@ jobs:
       - name: Install Chromium for probe smoke
         run: npx playwright install --with-deps chromium
 
+      - name: Prepare validation-only relative asset path
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/assets/AssetManifest.ts')
+          s = p.read_text()
+          old = "runtimeUrl: '/assets/test-character.glb'"
+          new = "runtimeUrl: './assets/test-character.glb'"
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+          PY
+
       - name: Build fixed runtime
         run: npx tsc --noEmit && npx vite build --base=./
 
-      - name: Start fixed runtime preview
+      - name: Inject external Task 13C probe into static build
+        run: |
+          cp tools/task13c-metrics.mjs dist/task13c-metrics.mjs
+          cp tools/task13c-probe.mjs dist/task13c-probe.mjs
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('dist/index.html')
+          s = p.read_text()
+          marker = '<script type="module" crossorigin src="./assets/'
+          assert marker in s
+          injected = '    <script type="module" src="./task13c-probe.mjs"></script>\n'
+          s = s.replace('    ' + marker, injected + '    ' + marker, 1)
+          p.write_text(s)
+          PY
+          grep -q 'task13c-probe.mjs' dist/index.html
+
+      - name: Start instrumented static preview
         run: |
           nohup npx vite preview --host 127.0.0.1 --port 4173 > /tmp/task13c-preview.log 2>&1 &
           for i in {1..30}; do
@@ -48,3 +76,21 @@ jobs:
 
       - name: Run Task 13C browser probe smoke
         run: node tools/task13c-probe.smoke.mjs
+
+      - name: Publish clean instrumented validation preview
+        env:
+          TARGET_BRANCH: validation-preview/task13c-low-uhd620
+        run: |
+          rm -rf /tmp/task13c-site
+          mkdir -p /tmp/task13c-site
+          cp -a dist/. /tmp/task13c-site/
+          git reset --hard HEAD
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan "$TARGET_BRANCH"
+          git rm -rf .
+          git clean -fdx
+          cp -a /tmp/task13c-site/. .
+          git add -A
+          git commit -m "validation: publish Task 13C UHD 620 real-GPU probe"
+          git push --force origin HEAD:"$TARGET_BRANCH"
