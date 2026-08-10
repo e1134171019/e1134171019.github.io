@@ -1,0 +1,9 @@
+{
+  "ok": true,
+  "node": "v22.23.1",
+  "platform": "linux",
+  "arch": "x64",
+  "threeRevision": "185",
+  "verifiedAt": "2026-08-09T16:07:46.587Z",
+  "purpose": "Validate GitHub Actions as dependency/bootstrap executor for Layer 07."
+}
