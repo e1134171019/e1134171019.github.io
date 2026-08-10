@@ -33,6 +33,21 @@ jobs:
           git apply task125-runtimeapp.patch
           git diff --check
 
+      - name: Capture and verify formal Task 12.5 source hashes
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          sha256sum src/character/AnimationCoordinator.ts src/character/AnimationCoordinator.test.ts src/app/RuntimeApp.ts src/app/RuntimeApp.test.ts | tee task125-source-sha256.txt
+          git hash-object src/app/RuntimeApp.ts src/app/RuntimeApp.test.ts | tee task125-runtimeapp-gitblob.txt
+          cat > task125-expected-source-sha256.txt <<'EOF'
+          3d93e46f2a0e9f563e9c85e6104d241b072c5501cae17a39ac7db5f7d3d5521b  src/character/AnimationCoordinator.ts
+          4033f911a90d5482b26598eccb6bb1226e6841dea39dd7c9a35d7aa1dc2408d9  src/character/AnimationCoordinator.test.ts
+          ab754fbd6764f4c55a5f13913956935dbea1dd902c5587853825fff3eb25b7d0  src/app/RuntimeApp.ts
+          fb5b81c831d8305f0cef651a9bd29e7d5da423658985a9cc517586afe01e67ac  src/app/RuntimeApp.test.ts
+          EOF
+          sha256sum -c task125-expected-source-sha256.txt | tee task125-source-hash-check.log
+
       - name: Generate executor-only lockfile
         working-directory: ci-mirror/cinematic-3d-character-website
         run: npm install --package-lock-only --ignore-scripts
@@ -41,19 +56,12 @@ jobs:
         working-directory: ci-mirror/cinematic-3d-character-website
         run: npm ci --ignore-scripts
 
-      - name: Verify formal Task 12.5 source hashes
+      - name: Reverify source bytes after dependency install
         working-directory: ci-mirror/cinematic-3d-character-website
         shell: bash
         run: |
           set -o pipefail
-          cat > task125-expected-source-sha256.txt <<'EOF'
-          3d93e46f2a0e9f563e9c85e6104d241b072c5501cae17a39ac7db5f7d3d5521b  src/character/AnimationCoordinator.ts
-          4033f911a90d5482b26598eccb6bb1226e6841dea39dd7c9a35d7aa1dc2408d9  src/character/AnimationCoordinator.test.ts
-          ab754fbd6764f4c55a5f13913956935dbea1dd902c5587853825fff3eb25b7d0  src/app/RuntimeApp.ts
-          fb5b81c831d8305f0cef651a9bd29e7d5da423658985a9cc517586afe01e67ac  src/app/RuntimeApp.test.ts
-          EOF
-          sha256sum -c task125-expected-source-sha256.txt | tee task125-source-hash-check.log
-          sha256sum src/character/AnimationCoordinator.ts src/character/AnimationCoordinator.test.ts src/app/RuntimeApp.ts src/app/RuntimeApp.test.ts > task125-source-sha256.txt
+          sha256sum -c task125-expected-source-sha256.txt | tee task125-post-install-source-hash-check.log
 
       - name: Run Task 12.5 targeted tests
         working-directory: ci-mirror/cinematic-3d-character-website
@@ -95,7 +103,9 @@ jobs:
             ci-mirror/cinematic-3d-character-website/task125-regression-test.log
             ci-mirror/cinematic-3d-character-website/task125-build.log
             ci-mirror/cinematic-3d-character-website/task125-source-sha256.txt
+            ci-mirror/cinematic-3d-character-website/task125-runtimeapp-gitblob.txt
             ci-mirror/cinematic-3d-character-website/task125-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task125-post-install-source-hash-check.log
             ci-mirror/cinematic-3d-character-website/task125-environment.txt
             ci-mirror/cinematic-3d-character-website/task125-result.json
           if-no-files-found: ignore
