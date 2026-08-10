@@ -1,0 +1,14 @@
+CesiumMan open-source runtime candidate
+
+Asset: CesiumMan
+Copyright: Cesium, 2017
+License: Creative Commons Attribution 4.0 International (CC BY 4.0)
+Source repository: KhronosGroup/glTF-Sample-Assets
+Pinned source commit: 2bac6f8c57bf471df0d2a1e8a8ec023c7801dddf
+Source path: Models/CesiumMan/glTF-Binary/CesiumMan.glb
+Git blob SHA-1: 8586c4e6a59bf8ef585c2a685c50a80d28503216
+SHA-256: b7001eaeea8254bd44773bcd247e78696d94169388fbb2a1800fc69434e777d9
+
+The Khronos sample-asset registry identifies this asset as CC BY 4.0 with Cesium trademark/logo limitations. Any Cesium trademark or logo included in the source asset remains subject to those limitations.
+
+This project uses CesiumMan only as a non-final open-source character integration candidate. It is not the project's cinematic master asset and is not claimed to be equivalent to the final cinematic character.
