@@ -10,7 +10,7 @@ permissions:
   contents: read
 
 jobs:
-  contract:
+  verify:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -18,5 +18,41 @@ jobs:
         with:
           node-version: '24'
       - run: npm install --no-audit --no-fund
+
       - name: Candidate manifest contract
         run: npx vitest run src/assets/AssetManifest.candidate.test.ts
+
+      - name: Full unit suite
+        run: npm test
+
+      - name: Production build with pinned asset materialization
+        run: npm run build
+
+      - name: Verify built GLB bytes and hash
+        shell: python
+        run: |
+          import hashlib
+          import pathlib
+          import struct
+
+          p = pathlib.Path('dist/assets/cesium-man.glb')
+          data = p.read_bytes()
+          assert len(data) == 438044, len(data)
+          assert hashlib.sha256(data).hexdigest() == 'b7001eaeea8254bd44773bcd247e78696d94169388fbb2a1800fc69434e777d9'
+          assert data[:4] == b'glTF'
+          assert struct.unpack_from('<I', data, 4)[0] == 2
+          print('built CesiumMan GLB verified', len(data), hashlib.sha256(data).hexdigest())
+
+      - name: Install Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Chromium runtime smoke
+        run: npx playwright test --project=chromium
+
+      - name: Upload verified static build
+        uses: actions/upload-artifact@v4
+        with:
+          name: cesium-man-integrated-static-build
+          path: dist/
+          if-no-files-found: error
+          retention-days: 7
