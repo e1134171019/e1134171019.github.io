@@ -154,6 +154,23 @@ describe('RuntimeApp lifecycle', () => {
     expect(harness.character.parent).toBeInstanceOf(Scene);
   });
 
+  it('applies the selected asset runtime transform to the loaded character root', async () => {
+    const harness = createHarness();
+    const app = new RuntimeApp({
+      root: harness.root,
+      windowRef: window,
+      documentRef: document,
+      dependencies: harness.dependencies,
+    });
+
+    await app.start();
+
+    expect(harness.character.scale.x).toBeCloseTo(0.369, 6);
+    expect(harness.character.scale.y).toBeCloseTo(0.369, 6);
+    expect(harness.character.scale.z).toBeCloseTo(0.369, 6);
+    expect(harness.character.rotation.y).toBeCloseTo(Math.PI, 6);
+  });
+
   it('maps renderer initialization failure to explicit fallback without starting input or frames', async () => {
     const harness = createHarness({
       createRenderer: vi.fn(() => {
