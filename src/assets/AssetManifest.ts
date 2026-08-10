@@ -25,7 +25,7 @@ export interface RuntimeAssetManifest {
   readonly provenance: RuntimeAssetProvenance;
 }
 
-export const TEST_CHARACTER_ASSET_MANIFEST = {
+export const BOX_TEST_ASSET_MANIFEST = {
   assetId: 'khronos-box-nonfinal-loader-fixture',
   runtimeUrl: '/assets/test-character.glb',
   assetClass: 'nonfinal_test_fixture',
@@ -76,3 +76,7 @@ export const OPEN_SOURCE_CHARACTER_ASSET_MANIFEST = {
     sha256: 'b7001eaeea8254bd44773bcd247e78696d94169388fbb2a1800fc69434e777d9',
   },
 } as const satisfies RuntimeAssetManifest;
+
+// RuntimeApp imports this legacy symbol as its default asset selection.
+// Keep the symbol stable while the selected candidate changes underneath it.
+export const TEST_CHARACTER_ASSET_MANIFEST = OPEN_SOURCE_CHARACTER_ASSET_MANIFEST;
