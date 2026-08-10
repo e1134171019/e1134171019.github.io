@@ -1,0 +1,58 @@
+name: cinematic-3d-direct-preview
+
+on:
+  push:
+    branches:
+      - preview-builder/cinematic-3d-uhd620
+
+permissions:
+  contents: write
+
+jobs:
+  build-static-preview:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source carrier
+        uses: actions/checkout@v4
+
+      - name: Verify source carrier parent
+        run: |
+          test "$(git rev-parse HEAD^)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Prepare preview-only relative asset path
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('src/assets/AssetManifest.ts')
+          s = p.read_text()
+          old = "runtimeUrl: '/assets/test-character.glb'"
+          new = "runtimeUrl: './assets/test-character.glb'"
+          assert old in s
+          p.write_text(s.replace(old, new, 1))
+          PY
+
+      - name: Build static preview
+        run: npx tsc --noEmit && npx vite build --base=./
+
+      - name: Publish static preview branch
+        env:
+          TARGET_BRANCH: preview/cinematic-3d-uhd620-static
+        run: |
+          cp -a dist /tmp/cinematic-preview-dist
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout --orphan "$TARGET_BRANCH"
+          git rm -rf .
+          cp -a /tmp/cinematic-preview-dist/. .
+          git add -A
+          git commit -m "preview: publish cinematic 3d UHD 620 test build"
+          git push --force origin HEAD:"$TARGET_BRANCH"
