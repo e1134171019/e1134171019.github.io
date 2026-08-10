@@ -1,0 +1,57 @@
+:root {
+  color-scheme: dark;
+  --runtime-overlay-surface: rgb(12 15 20 / 78%);
+  --runtime-overlay-text: #f4f6f8;
+  --runtime-overlay-muted: #c6ccd4;
+  --runtime-overlay-border: rgb(255 255 255 / 16%);
+  --runtime-overlay-error: #ffd7d7;
+  --runtime-overlay-radius: 0.75rem;
+  --runtime-overlay-gap: 0.5rem;
+}
+
+.runtime-overlay {
+  box-sizing: border-box;
+  display: grid;
+  width: min(32rem, calc(100% - 2rem));
+  gap: var(--runtime-overlay-gap);
+  padding: 1rem;
+  color: var(--runtime-overlay-text);
+  background: var(--runtime-overlay-surface);
+  border: 1px solid var(--runtime-overlay-border);
+  border-radius: var(--runtime-overlay-radius);
+  line-height: 1.45;
+  backdrop-filter: blur(0.75rem);
+}
+
+.runtime-overlay__heading,
+.runtime-overlay p {
+  margin: 0;
+}
+
+.runtime-overlay__heading {
+  font: inherit;
+  font-weight: 700;
+}
+
+.runtime-overlay__message,
+.runtime-overlay__help,
+.runtime-overlay__focus,
+.runtime-overlay__quality,
+.runtime-overlay__fallback-note {
+  color: var(--runtime-overlay-muted);
+}
+
+.runtime-overlay__error {
+  display: grid;
+  gap: 0.25rem;
+  color: var(--runtime-overlay-error);
+}
+
+.runtime-overlay__error-code {
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.runtime-overlay__error-message {
+  overflow-wrap: anywhere;
+}
