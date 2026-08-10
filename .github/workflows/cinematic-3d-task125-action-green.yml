@@ -1,0 +1,101 @@
+name: cinematic-3d-task125-action-green
+
+on:
+  push:
+    branches:
+      - runtime-bootstrap/cinematic-3d
+    paths:
+      - 'ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.ts'
+      - 'ci-mirror/cinematic-3d-character-website/src/character/AnimationCoordinator.test.ts'
+      - 'ci-mirror/cinematic-3d-character-website/task125-runtimeapp.patch'
+      - '.github/workflows/cinematic-3d-task125-action-green.yml'
+  workflow_dispatch:
+
+jobs:
+  task125-green:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Apply formal RuntimeApp patch
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -euo pipefail
+          git apply --check task125-runtimeapp.patch
+          git apply task125-runtimeapp.patch
+          git diff --check
+
+      - name: Generate executor-only lockfile
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm install --package-lock-only --ignore-scripts
+
+      - name: Install locked dependencies
+        working-directory: ci-mirror/cinematic-3d-character-website
+        run: npm ci --ignore-scripts
+
+      - name: Verify formal Task 12.5 source hashes
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          cat > task125-expected-source-sha256.txt <<'EOF'
+          3d93e46f2a0e9f563e9c85e6104d241b072c5501cae17a39ac7db5f7d3d5521b  src/character/AnimationCoordinator.ts
+          4033f911a90d5482b26598eccb6bb1226e6841dea39dd7c9a35d7aa1dc2408d9  src/character/AnimationCoordinator.test.ts
+          ab754fbd6764f4c55a5f13913956935dbea1dd902c5587853825fff3eb25b7d0  src/app/RuntimeApp.ts
+          fb5b81c831d8305f0cef651a9bd29e7d5da423658985a9cc517586afe01e67ac  src/app/RuntimeApp.test.ts
+          EOF
+          sha256sum -c task125-expected-source-sha256.txt | tee task125-source-hash-check.log
+          sha256sum src/character/AnimationCoordinator.ts src/character/AnimationCoordinator.test.ts src/app/RuntimeApp.ts src/app/RuntimeApp.test.ts > task125-source-sha256.txt
+
+      - name: Run Task 12.5 targeted tests
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test -- src/character/AnimationCoordinator.test.ts src/app/RuntimeApp.test.ts 2>&1 | tee task125-targeted-test.log
+
+      - name: Run full unit regression
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm test 2>&1 | tee task125-regression-test.log
+
+      - name: Run strict TypeScript and production build
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          set -o pipefail
+          npm run build 2>&1 | tee task125-build.log
+
+      - name: Record environment and result
+        working-directory: ci-mirror/cinematic-3d-character-website
+        shell: bash
+        run: |
+          node --version > task125-environment.txt
+          npm --version >> task125-environment.txt
+          npm ls --depth=0 >> task125-environment.txt
+          printf '{"targeted":"pass","regression":"pass","build":"pass","source_hash_match":true}\n' > task125-result.json
+
+      - name: Upload Task 12.5 evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cinematic-3d-task125-action-green-evidence
+          path: |
+            ci-mirror/cinematic-3d-character-website/task125-targeted-test.log
+            ci-mirror/cinematic-3d-character-website/task125-regression-test.log
+            ci-mirror/cinematic-3d-character-website/task125-build.log
+            ci-mirror/cinematic-3d-character-website/task125-source-sha256.txt
+            ci-mirror/cinematic-3d-character-website/task125-source-hash-check.log
+            ci-mirror/cinematic-3d-character-website/task125-environment.txt
+            ci-mirror/cinematic-3d-character-website/task125-result.json
+          if-no-files-found: ignore
