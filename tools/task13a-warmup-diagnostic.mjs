@@ -4,6 +4,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 const BASE_URL = process.env.BASE_URL ?? 'http://127.0.0.1:4175';
 const OUTPUT_DIR = 'artifacts/task13a-diagnostic';
 const VIEWPORT = { width: 1920, height: 1080 };
+const SAMPLE_MS = 5000;
 
 function median(values) {
   const sorted = [...values].sort((a, b) => a - b);
@@ -27,48 +28,58 @@ async function waitInteractive(page) {
   await page.waitForSelector('[data-runtime-mode="interactive"]', { state: 'visible', timeout: 30000 });
 }
 
-async function sample(page, label, observerEnabled) {
-  const result = await page.evaluate(async ({ observerEnabled }) => {
-    const frames = [];
-    const longTasks = [];
-    let observer = null;
-    if (observerEnabled) {
-      try {
-        observer = new PerformanceObserver((list) => {
-          for (const entry of list.getEntries()) longTasks.push(entry.duration);
-        });
-        observer.observe({ type: 'longtask', buffered: false });
-      } catch {}
-    }
+async function sampleRuntime(page, label) {
+  const result = await page.evaluate(async ({ sampleMs }) => {
+    const overlayHost = document.querySelector('.runtime-app__overlay');
+    if (!overlayHost) throw new Error('runtime overlay host missing');
 
-    const start = performance.now();
+    const rafTimes = [];
+    let runtimeOverlayMutations = 0;
+    const observer = new MutationObserver((records) => {
+      for (const record of records) {
+        if (record.type === 'childList') runtimeOverlayMutations += 1;
+      }
+    });
+    observer.observe(overlayHost, { childList: true });
+
+    const startedAt = performance.now();
     await new Promise((resolve) => {
       let previous = null;
       const tick = (timestamp) => {
-        if (previous !== null) frames.push(timestamp - previous);
+        if (previous !== null) rafTimes.push(timestamp - previous);
         previous = timestamp;
-        if (timestamp - start >= 5000) resolve();
+        if (timestamp - startedAt >= sampleMs) resolve();
         else requestAnimationFrame(tick);
       };
       requestAnimationFrame(tick);
     });
-    observer?.disconnect();
+    const actualDurationMs = performance.now() - startedAt;
+    observer.disconnect();
 
+    const runtime = document.querySelector('[data-character-runtime]');
+    const overlay = document.querySelector('.runtime-overlay');
     return {
-      frames,
-      longTaskCount: longTasks.length,
-      longTaskMs: longTasks.reduce((a, b) => a + b, 0),
-      nowMs: performance.now(),
+      rafTimes,
+      runtimeOverlayMutations,
+      actualDurationMs,
+      documentHasFocus: document.hasFocus(),
+      visibilityState: document.visibilityState,
+      runtimeMode: overlay?.getAttribute('data-runtime-mode') ?? null,
+      qualityLevel: overlay?.getAttribute('data-quality-level') ?? null,
+      devRuntimeDiagnosticsPresent: Boolean(runtime),
+      characterState: runtime?.getAttribute('data-state') ?? null,
+      heldInputs: runtime?.getAttribute('data-held-inputs') ?? null,
     };
-  }, { observerEnabled });
+  }, { sampleMs: SAMPLE_MS });
 
   return {
     label,
-    observerEnabled,
-    atPerformanceNowMs: result.nowMs,
-    frames: summarize(result.frames),
-    longTaskCount: result.longTaskCount,
-    longTaskMs: result.longTaskMs,
+    ...result,
+    raf: summarize(result.rafTimes),
+    rafTimes: undefined,
+    runtimeFrameProxyFps: result.actualDurationMs > 0
+      ? (result.runtimeOverlayMutations * 1000) / result.actualDurationMs
+      : null,
   };
 }
 
@@ -80,14 +91,42 @@ async function environment(page) {
     return {
       webgl2: Boolean(gl),
       renderer: gl ? (ext ? gl.getParameter(ext.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER)) : null,
-      canvas: canvas ? { width: canvas.width, height: canvas.height } : null,
+      canvas: canvas ? { width: canvas.width, height: canvas.height, clientWidth: canvas.clientWidth, clientHeight: canvas.clientHeight } : null,
+      documentHasFocus: document.hasFocus(),
+      visibilityState: document.visibilityState,
     };
   });
 }
 
+async function syntheticBlur(page) {
+  await page.evaluate(() => window.dispatchEvent(new Event('blur')));
+  await page.waitForTimeout(250);
+}
+
+async function refocusRuntime(page) {
+  await page.evaluate(() => {
+    document.querySelector('.runtime-app')?.focus();
+    window.dispatchEvent(new Event('focus'));
+  });
+  await page.waitForTimeout(250);
+}
+
+async function repeatedBlurFocus(page, count) {
+  for (let index = 0; index < count; index += 1) {
+    await syntheticBlur(page);
+    await refocusRuntime(page);
+  }
+}
+
 await mkdir(OUTPUT_DIR, { recursive: true });
 const browser = await chromium.launch({ headless: true, args: ['--enable-precise-memory-info'] });
-const output = { browser: browser.version(), viewport: VIEWPORT, phases: [] };
+const output = {
+  diagnostic: 'generic requestAnimationFrame versus RuntimeApp overlay-mutation frame proxy across synthetic blur/focus',
+  browser: browser.version(),
+  viewport: VIEWPORT,
+  sampleDurationMs: SAMPLE_MS,
+  phases: [],
+};
 
 try {
   const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
@@ -96,21 +135,19 @@ try {
   await waitInteractive(page);
   output.environment = await environment(page);
 
-  output.phases.push(await sample(page, 'cold_no_observer', false));
-  output.phases.push(await sample(page, 'cold_with_observer', true));
-  await page.waitForTimeout(10000);
-  output.phases.push(await sample(page, 'warm_no_observer', false));
-  output.phases.push(await sample(page, 'warm_with_observer', true));
-  await context.close();
+  output.phases.push(await sampleRuntime(page, 'baseline_before_blur'));
 
-  const context2 = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
-  const page2 = await context2.newPage();
-  await page2.goto(BASE_URL, { waitUntil: 'domcontentloaded' });
-  await waitInteractive(page2);
-  output.secondContextEnvironment = await environment(page2);
-  output.phases.push(await sample(page2, 'second_context_no_observer', false));
-  output.phases.push(await sample(page2, 'second_context_with_observer', true));
-  await context2.close();
+  await syntheticBlur(page);
+  output.phases.push(await sampleRuntime(page, 'after_synthetic_window_blur'));
+
+  await refocusRuntime(page);
+  output.phases.push(await sampleRuntime(page, 'after_runtime_refocus'));
+
+  await repeatedBlurFocus(page, 10);
+  output.phases.push(await sampleRuntime(page, 'after_10_blur_focus_cycles'));
+
+  output.finalEnvironment = await environment(page);
+  await context.close();
 } finally {
   await browser.close();
 }
