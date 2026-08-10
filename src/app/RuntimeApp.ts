@@ -1,6 +1,7 @@
 import { Vector3, type AnimationClip, type Object3D } from 'three';
 import {
   AnimationCoordinator,
+  type AnimationRuntimeEvent,
   type AnimationTransitionResult,
 } from '../character/AnimationCoordinator';
 import {
@@ -47,7 +48,8 @@ export interface RuntimeInputPort {
 
 export interface RuntimeAnimationPort {
   transitionTo(desiredState: CharacterDesiredState): AnimationTransitionResult;
-  update(deltaTime: number): void;
+  update(deltaTime: number): readonly AnimationRuntimeEvent[];
+  dispose(): void;
 }
 
 export interface RuntimeCameraPort {
@@ -375,8 +377,10 @@ export class RuntimeApp {
     };
     applyCharacterMotion(this.requireCharacterRoot(), motion);
 
-    this.requireAnimation().transitionTo(this.desiredState);
-    this.requireAnimation().update(deltaTime);
+    const animation = this.requireAnimation();
+    animation.transitionTo(this.desiredState);
+    const animationEvents = animation.update(deltaTime);
+    this.consumeAnimationEvents(animationEvents, input);
 
     const characterPosition = this.requireCharacterRoot().position;
     const camera = this.requireCamera().update({
@@ -402,6 +406,20 @@ export class RuntimeApp {
     renderer.renderer.render(renderer.scene, renderer.camera);
     this.updateDiagnostics(input);
     this.updateOverlay();
+  }
+
+  private consumeAnimationEvents(
+    events: readonly AnimationRuntimeEvent[],
+    input: InputSnapshot,
+  ): void {
+    for (const event of events) {
+      if (event.type === 'actionCompleted') {
+        this.desiredState = reduceCharacterState(this.desiredState, {
+          type: 'actionCompleted',
+          input,
+        });
+      }
+    }
   }
 
   private updateDiagnostics(input?: InputSnapshot): void {
@@ -472,6 +490,11 @@ export class RuntimeApp {
     if (this.resizeRegistered) {
       this.windowRef.removeEventListener('resize', this.handleResize);
       this.resizeRegistered = false;
+    }
+
+    if (this.animation) {
+      this.animation.dispose();
+      this.animation = null;
     }
 
     if (this.characterRoot?.parent) {

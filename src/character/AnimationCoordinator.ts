@@ -11,6 +11,9 @@ import type { CharacterDesiredState } from '../state/CharacterState';
 export type CharacterAnimationState = 'idle' | 'walk' | 'turn' | 'action' | 'none';
 export type AnimationTransitionKind = 'started' | 'crossfade' | 'unchanged' | 'none';
 
+export type AnimationRuntimeEvent =
+  | { readonly type: 'actionCompleted' };
+
 export interface SemanticAnimationSelection {
   readonly clip: AnimationClip | null;
   readonly actualAnimationState: CharacterAnimationState;
@@ -142,11 +145,16 @@ export class AnimationCoordinator {
   private currentAction: AnimationAction | null = null;
   private currentClip: AnimationClip | null = null;
   private currentState: CharacterAnimationState = 'none';
+  private actionRequestActive = false;
+  private armedAction: AnimationAction | null = null;
+  private pendingEvents: AnimationRuntimeEvent[] = [];
+  private disposed = false;
 
   constructor(root: Object3D, clips: readonly AnimationClip[], options: AnimationCoordinatorOptions = {}) {
     this.mixer = options.mixer ?? new AnimationMixer(root);
     this.clips = [...clips];
     this.crossFadeDuration = Math.max(0, options.crossFadeDuration ?? DEFAULT_CROSS_FADE_DURATION);
+    this.mixer.addEventListener('finished', this.handleMixerFinished);
   }
 
   get actualAnimationState(): CharacterAnimationState {
@@ -155,8 +163,22 @@ export class AnimationCoordinator {
 
   transitionTo(desiredState: CharacterDesiredState): AnimationTransitionResult {
     const selection = selectSemanticAnimationClip(this.clips, desiredState);
+    const newActionRequest = desiredState === 'action' && !this.actionRequestActive;
+
+    if (desiredState !== 'action') {
+      this.actionRequestActive = false;
+      this.armedAction = null;
+    } else if (newActionRequest) {
+      this.actionRequestActive = true;
+      if (selection.actualAnimationState !== 'action') {
+        this.pendingEvents.push({ type: 'actionCompleted' });
+      }
+    }
 
     if (!selection.clip) {
+      this.currentState = 'none';
+      this.currentClip = null;
+      this.currentAction = null;
       return {
         desiredState,
         actualAnimationState: 'none',
@@ -190,6 +212,10 @@ export class AnimationCoordinator {
     this.currentClip = selection.clip;
     this.currentState = selection.actualAnimationState;
 
+    if (newActionRequest && selection.actualAnimationState === 'action') {
+      this.armedAction = nextAction;
+    }
+
     return {
       desiredState,
       actualAnimationState: selection.actualAnimationState,
@@ -199,11 +225,38 @@ export class AnimationCoordinator {
     };
   }
 
-  update(deltaTime: number): void {
-    if (!Number.isFinite(deltaTime) || deltaTime <= 0) {
+  update(deltaTime: number): readonly AnimationRuntimeEvent[] {
+    if (this.disposed) {
+      return [];
+    }
+
+    if (Number.isFinite(deltaTime) && deltaTime > 0) {
+      this.mixer.update(deltaTime);
+    }
+
+    const events = this.pendingEvents;
+    this.pendingEvents = [];
+    return events;
+  }
+
+  dispose(): void {
+    if (this.disposed) {
       return;
     }
 
-    this.mixer.update(deltaTime);
+    this.disposed = true;
+    this.mixer.removeEventListener('finished', this.handleMixerFinished);
+    this.armedAction = null;
+    this.actionRequestActive = false;
+    this.pendingEvents = [];
   }
+
+  private readonly handleMixerFinished = (event: { readonly action: AnimationAction }): void => {
+    if (this.disposed || this.armedAction === null || event.action !== this.armedAction) {
+      return;
+    }
+
+    this.armedAction = null;
+    this.pendingEvents.push({ type: 'actionCompleted' });
+  };
 }

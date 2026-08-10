@@ -37,6 +37,11 @@ interface Harness {
   };
   readonly rendererDispose: ReturnType<typeof vi.fn>;
   readonly rendererRender: ReturnType<typeof vi.fn>;
+  readonly animation: {
+    transitionTo: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
+  };
   readonly cancelFrame: ReturnType<typeof vi.fn>;
   readonly requestedFrames: Array<FrameRequestCallback>;
 }
@@ -85,7 +90,8 @@ function createHarness(overrides: Partial<RuntimeAppDependencies> = {}): Harness
         transition: 'none',
       }),
     ),
-    update: vi.fn(),
+    update: vi.fn(() => []),
+    dispose: vi.fn(),
   };
 
   const cameraController = {
@@ -123,6 +129,7 @@ function createHarness(overrides: Partial<RuntimeAppDependencies> = {}): Harness
     input,
     rendererDispose,
     rendererRender,
+    animation,
     cancelFrame,
     requestedFrames,
   };
@@ -171,6 +178,61 @@ describe('RuntimeApp lifecycle', () => {
     expect(harness.root.textContent).toContain('unsupported_webgl2');
   });
 
+  it('consumes semantic action completion and progresses back to interactive idle', async () => {
+    const harness = createHarness();
+    harness.input.snapshot
+      .mockReturnValueOnce({
+        held: EMPTY_INPUT.held,
+        pressed: { primaryAction: true },
+      })
+      .mockReturnValue(EMPTY_INPUT);
+    harness.animation.update
+      .mockReturnValueOnce([{ type: 'actionCompleted' }])
+      .mockReturnValue([]);
+
+    const app = new RuntimeApp({
+      root: harness.root,
+      windowRef: window,
+      documentRef: document,
+      dependencies: harness.dependencies,
+    });
+
+    await app.start();
+    harness.requestedFrames[0]?.(16);
+
+    expect(harness.root.getAttribute('data-state')).toBe('returnToIdle');
+
+    harness.requestedFrames[1]?.(32);
+    expect(harness.root.getAttribute('data-state')).toBe('interactiveIdle');
+  });
+
+  it('preserves held forward movement when semantic action completion is consumed', async () => {
+    const harness = createHarness();
+    const actionWhileMoving: InputSnapshot = {
+      held: {
+        ...EMPTY_INPUT.held,
+        moveForward: true,
+      },
+      pressed: { primaryAction: true },
+    };
+    harness.input.snapshot.mockReturnValue(actionWhileMoving);
+    harness.animation.update
+      .mockReturnValueOnce([{ type: 'actionCompleted' }])
+      .mockReturnValue([]);
+
+    const app = new RuntimeApp({
+      root: harness.root,
+      windowRef: window,
+      documentRef: document,
+      dependencies: harness.dependencies,
+    });
+
+    await app.start();
+    harness.requestedFrames[0]?.(16);
+
+    expect(harness.root.getAttribute('data-state')).toBe('move');
+  });
+
   it('dispose stops input and animation-frame side effects idempotently', async () => {
     const harness = createHarness();
     const app = new RuntimeApp({
@@ -190,6 +252,7 @@ describe('RuntimeApp lifecycle', () => {
     expect(harness.input.stop).toHaveBeenCalledTimes(1);
     expect(harness.cancelFrame).toHaveBeenCalledTimes(1);
     expect(harness.rendererDispose).toHaveBeenCalledTimes(1);
+    expect(harness.animation.dispose).toHaveBeenCalledTimes(1);
 
     scheduledFrame?.(16);
     expect(harness.input.snapshot).not.toHaveBeenCalled();

@@ -38,6 +38,82 @@ describe('selectSemanticAnimationClip', () => {
 });
 
 describe('AnimationCoordinator', () => {
+  it('emits one semantic completion when the armed one-shot action finishes', () => {
+    const root = new Object3D();
+    const action = new AnimationClip('Action', 0.1, []);
+    const coordinator = new AnimationCoordinator(root, [action]);
+
+    coordinator.transitionTo('action');
+
+    expect(coordinator.update(0.2)).toEqual([{ type: 'actionCompleted' }]);
+    expect(coordinator.update(0.2)).toEqual([]);
+  });
+
+  it('does not emit actionCompleted for an unrelated mixer finish', () => {
+    const root = new Object3D();
+    const idle = clip('Idle');
+    const action = new AnimationClip('Action', 0.1, []);
+    const mixer = new AnimationMixer(root);
+    const coordinator = new AnimationCoordinator(root, [idle, action], { mixer });
+
+    coordinator.transitionTo('interactiveIdle');
+    mixer.dispatchEvent({
+      type: 'finished',
+      action: mixer.clipAction(idle),
+      direction: 1,
+    });
+
+    expect(coordinator.update(0)).toEqual([]);
+  });
+
+  it('re-arms a later semantic action after leaving the prior action state', () => {
+    const root = new Object3D();
+    const idle = clip('Idle');
+    const action = new AnimationClip('Action', 0.1, []);
+    const coordinator = new AnimationCoordinator(root, [idle, action]);
+
+    coordinator.transitionTo('action');
+    expect(coordinator.update(0.2)).toEqual([{ type: 'actionCompleted' }]);
+
+    coordinator.transitionTo('interactiveIdle');
+    coordinator.update(0.01);
+    coordinator.transitionTo('action');
+
+    expect(coordinator.update(0.2)).toEqual([{ type: 'actionCompleted' }]);
+  });
+
+  it('emits one semantic completion when action falls back to idle', () => {
+    const coordinator = new AnimationCoordinator(new Object3D(), [clip('Idle')]);
+
+    const result = coordinator.transitionTo('action');
+
+    expect(result.usedFallback).toBe(true);
+    expect(result.actualAnimationState).toBe('idle');
+    expect(coordinator.update(0)).toEqual([{ type: 'actionCompleted' }]);
+    expect(coordinator.update(0)).toEqual([]);
+  });
+
+  it('emits one semantic completion for the zero-clip fixture without crashing', () => {
+    const coordinator = new AnimationCoordinator(new Object3D(), []);
+
+    coordinator.transitionTo('action');
+
+    expect(coordinator.update(0)).toEqual([{ type: 'actionCompleted' }]);
+    expect(coordinator.update(0)).toEqual([]);
+  });
+
+  it('clears completion delivery when disposed and remains idempotent', () => {
+    const root = new Object3D();
+    const action = new AnimationClip('Action', 0.1, []);
+    const coordinator = new AnimationCoordinator(root, [action]);
+
+    coordinator.transitionTo('action');
+    coordinator.dispose();
+    coordinator.dispose();
+
+    expect(coordinator.update(0.2)).toEqual([]);
+  });
+
   it('requests a crossfade when the selected source and target clips differ', () => {
     const root = new Object3D();
     const idle = clip('Idle');
