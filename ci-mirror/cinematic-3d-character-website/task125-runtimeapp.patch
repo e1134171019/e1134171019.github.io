@@ -1,0 +1,172 @@
+diff --git a/src/app/RuntimeApp.test.ts b/src/app/RuntimeApp.test.ts
+index bb97f40..6a7ac6d 100644
+--- a/src/app/RuntimeApp.test.ts
++++ b/src/app/RuntimeApp.test.ts
+@@ -37,6 +37,11 @@ interface Harness {
+   };
+   readonly rendererDispose: ReturnType<typeof vi.fn>;
+   readonly rendererRender: ReturnType<typeof vi.fn>;
++  readonly animation: {
++    transitionTo: ReturnType<typeof vi.fn>;
++    update: ReturnType<typeof vi.fn>;
++    dispose: ReturnType<typeof vi.fn>;
++  };
+   readonly cancelFrame: ReturnType<typeof vi.fn>;
+   readonly requestedFrames: Array<FrameRequestCallback>;
+ }
+@@ -85,7 +90,8 @@ function createHarness(overrides: Partial<RuntimeAppDependencies> = {}): Harness
+         transition: 'none',
+       }),
+     ),
+-    update: vi.fn(),
++    update: vi.fn(() => []),
++    dispose: vi.fn(),
+   };
+ 
+   const cameraController = {
+@@ -123,6 +129,7 @@ function createHarness(overrides: Partial<RuntimeAppDependencies> = {}): Harness
+     input,
+     rendererDispose,
+     rendererRender,
++    animation,
+     cancelFrame,
+     requestedFrames,
+   };
+@@ -171,6 +178,61 @@ describe('RuntimeApp lifecycle', () => {
+     expect(harness.root.textContent).toContain('unsupported_webgl2');
+   });
+ 
++  it('consumes semantic action completion and progresses back to interactive idle', async () => {
++    const harness = createHarness();
++    harness.input.snapshot
++      .mockReturnValueOnce({
++        held: EMPTY_INPUT.held,
++        pressed: { primaryAction: true },
++      })
++      .mockReturnValue(EMPTY_INPUT);
++    harness.animation.update
++      .mockReturnValueOnce([{ type: 'actionCompleted' }])
++      .mockReturnValue([]);
++
++    const app = new RuntimeApp({
++      root: harness.root,
++      windowRef: window,
++      documentRef: document,
++      dependencies: harness.dependencies,
++    });
++
++    await app.start();
++    harness.requestedFrames[0]?.(16);
++
++    expect(harness.root.getAttribute('data-state')).toBe('returnToIdle');
++
++    harness.requestedFrames[1]?.(32);
++    expect(harness.root.getAttribute('data-state')).toBe('interactiveIdle');
++  });
++
++  it('preserves held forward movement when semantic action completion is consumed', async () => {
++    const harness = createHarness();
++    const actionWhileMoving: InputSnapshot = {
++      held: {
++        ...EMPTY_INPUT.held,
++        moveForward: true,
++      },
++      pressed: { primaryAction: true },
++    };
++    harness.input.snapshot.mockReturnValue(actionWhileMoving);
++    harness.animation.update
++      .mockReturnValueOnce([{ type: 'actionCompleted' }])
++      .mockReturnValue([]);
++
++    const app = new RuntimeApp({
++      root: harness.root,
++      windowRef: window,
++      documentRef: document,
++      dependencies: harness.dependencies,
++    });
++
++    await app.start();
++    harness.requestedFrames[0]?.(16);
++
++    expect(harness.root.getAttribute('data-state')).toBe('move');
++  });
++
+   it('dispose stops input and animation-frame side effects idempotently', async () => {
+     const harness = createHarness();
+     const app = new RuntimeApp({
+@@ -190,6 +252,7 @@ describe('RuntimeApp lifecycle', () => {
+     expect(harness.input.stop).toHaveBeenCalledTimes(1);
+     expect(harness.cancelFrame).toHaveBeenCalledTimes(1);
+     expect(harness.rendererDispose).toHaveBeenCalledTimes(1);
++    expect(harness.animation.dispose).toHaveBeenCalledTimes(1);
+ 
+     scheduledFrame?.(16);
+     expect(harness.input.snapshot).not.toHaveBeenCalled();
+diff --git a/src/app/RuntimeApp.ts b/src/app/RuntimeApp.ts
+index 2756f08..a4c8c1f 100644
+--- a/src/app/RuntimeApp.ts
++++ b/src/app/RuntimeApp.ts
+@@ -1,6 +1,7 @@
+ import { Vector3, type AnimationClip, type Object3D } from 'three';
+ import {
+   AnimationCoordinator,
++  type AnimationRuntimeEvent,
+   type AnimationTransitionResult,
+ } from '../character/AnimationCoordinator';
+ import {
+@@ -47,7 +48,8 @@ export interface RuntimeInputPort {
+ 
+ export interface RuntimeAnimationPort {
+   transitionTo(desiredState: CharacterDesiredState): AnimationTransitionResult;
+-  update(deltaTime: number): void;
++  update(deltaTime: number): readonly AnimationRuntimeEvent[];
++  dispose(): void;
+ }
+ 
+ export interface RuntimeCameraPort {
+@@ -375,8 +377,10 @@ export class RuntimeApp {
+     };
+     applyCharacterMotion(this.requireCharacterRoot(), motion);
+ 
+-    this.requireAnimation().transitionTo(this.desiredState);
+-    this.requireAnimation().update(deltaTime);
++    const animation = this.requireAnimation();
++    animation.transitionTo(this.desiredState);
++    const animationEvents = animation.update(deltaTime);
++    this.consumeAnimationEvents(animationEvents, input);
+ 
+     const characterPosition = this.requireCharacterRoot().position;
+     const camera = this.requireCamera().update({
+@@ -404,6 +408,20 @@ export class RuntimeApp {
+     this.updateOverlay();
+   }
+ 
++  private consumeAnimationEvents(
++    events: readonly AnimationRuntimeEvent[],
++    input: InputSnapshot,
++  ): void {
++    for (const event of events) {
++      if (event.type === 'actionCompleted') {
++        this.desiredState = reduceCharacterState(this.desiredState, {
++          type: 'actionCompleted',
++          input,
++        });
++      }
++    }
++  }
++
+   private updateDiagnostics(input?: InputSnapshot): void {
+     if (!import.meta.env.DEV) {
+       return;
+@@ -474,6 +492,11 @@ export class RuntimeApp {
+       this.resizeRegistered = false;
+     }
+ 
++    if (this.animation) {
++      this.animation.dispose();
++      this.animation = null;
++    }
++
+     if (this.characterRoot?.parent) {
+       this.characterRoot.parent.remove(this.characterRoot);
+     }
