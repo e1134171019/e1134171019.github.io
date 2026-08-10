@@ -1,0 +1,39 @@
+name: Open Source Human v2 - Asset Inspection
+
+on:
+  push:
+    branches:
+      - asset-integration/open-source-human-v2
+    paths:
+      - .github/workflows/open-source-human-v2-inspect.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download exact OpenGameArt archive
+        run: |
+          set -euo pipefail
+          url='https://opengameart.org/sites/default/files/basemesh_a1_human_yw_by_girush_2.7z'
+          curl --fail --location --retry 3 --retry-delay 2 "$url" -o /tmp/humanoid.7z
+          wc -c /tmp/humanoid.7z
+          sha256sum /tmp/humanoid.7z
+      - name: Inspect and extract archive
+        run: |
+          set -euo pipefail
+          7z l -slt /tmp/humanoid.7z
+          mkdir -p /tmp/humanoid
+          7z x -y -o/tmp/humanoid /tmp/humanoid.7z >/dev/null
+          echo '--- extracted files ---'
+          find /tmp/humanoid -type f -printf '%s\t%p\n' | sort -n
+          echo '--- candidate model files ---'
+          find /tmp/humanoid -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.fbx' -o -iname '*.blend' \) -printf '%s\t%p\n' | sort -n
+      - name: Hash extracted model candidates
+        run: |
+          set -euo pipefail
+          find /tmp/humanoid -type f \( -iname '*.glb' -o -iname '*.gltf' -o -iname '*.fbx' -o -iname '*.blend' \) -print0 | sort -z | xargs -0 -r sha256sum
