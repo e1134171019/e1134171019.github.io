@@ -39,7 +39,7 @@ jobs:
           set -euo pipefail
           {
             echo '13725778ec4888bf72e90e6d70216da0bb9ec22a8e2e521638e4a3f585909a8c  src/quality/PerformanceMonitor.ts'
-            echo '8150de7533f1c82a07f5fb590315b22bb30d71dedd81b9aa0355962af3b3a5f6  src/quality/QualityPolicy.ts'
+            echo '7884c7e84214048c6d907ced85a8cb0b722f6618483327d301aa1d2c919e1328  src/quality/QualityPolicy.ts'
             echo '2231cab51621f488adf36c50c162e0d16ca0518383f7489b76f50c71ee66cec1  src/quality/QualityPolicy.test.ts'
           } | sha256sum -c - | tee task9-source-hash-check.log
 
