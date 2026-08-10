@@ -15,11 +15,11 @@ jobs:
       - name: Checkout exact source carrier
         uses: actions/checkout@v4
         with:
-          fetch-depth: 2
+          fetch-depth: 3
 
-      - name: Verify source carrier parent
+      - name: Verify source carrier ancestry
         run: |
-          test "$(git rev-parse HEAD^)" = "8f65436480937a26563ecb8d78a69281b955b088" || test "$(git rev-parse HEAD^^)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
+          test "$(git rev-parse HEAD^^^)" = "bf5ba41951b7d37c588ebd7abc0944a856782b2c"
 
       - name: Verify runtime source unchanged from carrier
         run: |
