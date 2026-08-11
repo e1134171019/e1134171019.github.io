@@ -1,0 +1,123 @@
+name: DRL Head PBR Full Inventory
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - .github/workflows/drl-head-pbr-full-inventory.yml
+  workflow_dispatch:
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified official DRL Head PBR archive
+        run: |
+          mkdir -p artifacts/drl-head-pbr-full-inventory
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          SIZE="$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)"
+          test "$SIZE" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip | tee artifacts/drl-head-pbr-full-inventory/archive-sha256.txt
+          printf '%s\n' "$SIZE" > artifacts/drl-head-pbr-full-inventory/archive-size.txt
+
+      - name: Inventory archive and classify PBR assets
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib,json,re,zipfile
+          zpath=Path('/tmp/Marcus_PBR_Sample_01.zip')
+          out=Path('artifacts/drl-head-pbr-full-inventory')
+          with zipfile.ZipFile(zpath) as z:
+              infos=z.infolist()
+              entries=[]
+              for i in infos:
+                  entries.append({
+                      'name':i.filename,
+                      'compressed_size':i.compress_size,
+                      'uncompressed_size':i.file_size,
+                      'crc32':f'{i.CRC:08x}',
+                      'compress_type':i.compress_type,
+                  })
+          def cat(name):
+              n=name.lower()
+              groups=[]
+              tests={
+                  'geometry':('obj','fbx','ztl','blend','max','abc','ply'),
+                  'albedo_color':('albedo','diffuse','diff','basecolor','base_color','color','colour'),
+                  'normal':('normal','nrm'),
+                  'roughness_gloss':('rough','gloss'),
+                  'specular':('specular','spec'),
+                  'displacement_height':('displace','displacement','height','disp'),
+                  'sss_transmission':('sss','subsurface','transluc','transmission'),
+                  'ao_cavity':('ambientocclusion','ambient_occlusion','ao','cavity'),
+                  'eye':('eye','iris','sclera','cornea','tear'),
+                  'hair_brow_lash':('hair','brow','eyebrow','lash'),
+                  'mouth_teeth_tongue':('mouth','teeth','tooth','tongue','gum'),
+              }
+              ext=Path(n).suffix.lstrip('.')
+              for g,keys in tests.items():
+                  if g=='geometry':
+                      if ext in keys: groups.append(g)
+                  elif any(k in n for k in keys): groups.append(g)
+              return groups
+          classified={}
+          for e in entries:
+              for g in cat(e['name']): classified.setdefault(g,[]).append(e)
+          ext_counts={}
+          for e in entries:
+              ext=Path(e['name']).suffix.lower() or '<none>'
+              ext_counts[ext]=ext_counts.get(ext,0)+1
+          # Rank practical texture/mesh candidates for next selective extraction.
+          candidates=[]
+          for e in entries:
+              groups=cat(e['name'])
+              if groups:
+                  score=0
+                  n=e['name'].lower()
+                  if any(g in groups for g in ['albedo_color','normal','roughness_gloss','specular','displacement_height']): score+=5
+                  if 'geometry' in groups: score+=4
+                  if any(x in n for x in ['8k','8192','4k','4096']): score+=3
+                  if any(x in n for x in ['16k','16384']): score+=2
+                  if Path(n).suffix.lower() in ['.jpg','.jpeg','.png','.tif','.tiff','.exr','.obj','.fbx','.blend','.ztl']: score+=2
+                  candidates.append({'score':score,'groups':groups,**e})
+          candidates.sort(key=lambda x:(-x['score'],x['uncompressed_size']))
+          report={
+              'source':'Digital Reality Lab Head PBR Scan Sample / Marcus_PBR_Sample_01.zip',
+              'zip_bytes':zpath.stat().st_size,
+              'entry_count':len(entries),
+              'extensions':dict(sorted(ext_counts.items())),
+              'classified_counts':{k:len(v) for k,v in classified.items()},
+              'classified':classified,
+              'ranked_candidates':candidates,
+              'entries':entries,
+          }
+          (out/'inventory.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+          lines=[]
+          for g in ['geometry','albedo_color','normal','roughness_gloss','specular','displacement_height','sss_transmission','ao_cavity','eye','hair_brow_lash','mouth_teeth_tongue']:
+              lines.append(f'\n## {g} ({len(classified.get(g,[]))})')
+              for e in classified.get(g,[]): lines.append(f"{e['uncompressed_size']:>12}  {e['compressed_size']:>12}  {e['name']}")
+          (out/'classified-assets.txt').write_text('\n'.join(lines),encoding='utf-8')
+          (out/'top-candidates.txt').write_text('\n'.join(f"{e['score']:>2} {e['uncompressed_size']:>12} {','.join(e['groups']):<35} {e['name']}" for e in candidates[:120]),encoding='utf-8')
+          print(f"DRL entries={len(entries)} classes={report['classified_counts']}")
+          print((out/'classified-assets.txt').read_text()[:50000])
+          PY
+          test -s artifacts/drl-head-pbr-full-inventory/inventory.json
+          test -s artifacts/drl-head-pbr-full-inventory/classified-assets.txt
+
+      - name: Preserve official source and usage pages
+        run: |
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o artifacts/drl-head-pbr-full-inventory/sample-model.html https://www.digitalrealitylab.com/sample-model/
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o artifacts/drl-head-pbr-full-inventory/download-page.html https://www.digitalrealitylab.com/download/head-pbr-scan-sample/
+          grep -Eqi 'commercial|personal' artifacts/drl-head-pbr-full-inventory/sample-model.html
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drl-head-pbr-full-inventory
+          path: artifacts/drl-head-pbr-full-inventory/
+          if-no-files-found: error
+          retention-days: 14
