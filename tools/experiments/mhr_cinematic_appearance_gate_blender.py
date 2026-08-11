@@ -136,7 +136,7 @@ def add_eye(side, hmin, hmax, arm, head_bone, mats):
     sx = 1 if side == "L" else -1
     x = (hmin.x+hmax.x)*0.5 + sx*hs.x*0.135
     z = hmax.z - hs.z*0.430
-    cy = hmin.y + hs.y*0.250
+    cy = hmin.y + hs.y*0.210
     rx, ry, rz = hs.x*0.045, hs.y*0.040, hs.z*0.044
     sclera = add_uv_sphere(f"Eye_{side}_Sclera", (x,cy,z), (rx,ry,rz), mats["sclera"])
     iris_y = cy-ry*0.92
@@ -168,13 +168,13 @@ def add_eyebrows(hmin,hmax,arm,head_bone,hair_mat):
 
 def add_hair_cap(hmin,hmax,bmax,extent,arm,head_bone,hair_mat):
     hc=(hmin+hmax)*0.5; hs=hmax-hmin
-    center=Vector((hc.x,hc.y+hs.y*0.012,hc.z+hs.z*0.012)); radii=Vector((hs.x*0.490,hs.y*0.490,hs.z*0.495))
+    center=Vector((hc.x,hc.y+hs.y*0.012,hc.z+hs.z*0.012)); radii=Vector((hs.x*0.505,hs.y*0.505,hs.z*0.515))
     bpy.ops.mesh.primitive_uv_sphere_add(segments=72,ring_count=36,location=center)
     cap=bpy.context.object; cap.name="CloseCroppedHairCap"; cap.scale=radii
     bpy.ops.object.transform_apply(location=False,rotation=False,scale=True)
     mesh=cap.data; bpy.context.view_layer.objects.active=cap; cap.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT"); bpy.ops.mesh.select_all(action="DESELECT"); bpy.ops.object.mode_set(mode="OBJECT")
-    lower_back=bmax.z-extent.z*0.070
+    lower_back=bmax.z-extent.z*0.060
     front_hairline=bmax.z-extent.z*0.024
     front_split_y=hc.y-hs.y*0.030
     for v in mesh.vertices:
@@ -231,8 +231,8 @@ def main():
     cam=setup_render_scene(center,extent); full=render_ring(cam,center,extent,"view",center.z+extent.z*0.03,2.85,[0,45,90,135,180,225,270,315]); face=render_ring(cam,center,extent,"face",bmax.z-extent.z*0.09,0.48,[0,45,90,180,270,315])
     glb=export_glb(); fbx_copy=OUT/"mhr_v1.0.1_lod1_source_rigged.fbx"; shutil.copy2(FBX,fbx_copy)
     shape_keys=sum(max(0,len(o.data.shape_keys.key_blocks)-1) for o in meshes if o.data.shape_keys and o.data.shape_keys.key_blocks)
-    metrics={"model":"Meta Momentum Human Rig (MHR)","source_version":"v1.0.1","prototype":"cinematic_appearance_v4","mesh_object_count_source":len(meshes),"armature_object_count":len(arms),"bone_count":sum(len(a.data.bones) for a in arms),"shape_key_count":shape_keys,"head_bone":head_bone,"estimated_head_bounds_min":list(hmin),"estimated_head_bounds_max":list(hmax),"left_eye_center":list(lc),"right_eye_center":list(rc),"eye_radii":list(er),"added_objects":[o.name for o in lp+rp+brows+[hair]],"materials":[m.name for m in mats.values()],"full_body_views":full,"face_views":face,"glb":glb.name,"source_fbx_copy":fbx_copy.name,"gate_status":"READY_FOR_GPT_CINEMATIC_APPEARANCE_REVIEW","formal_final_character":False,"limitations":["No identity/reference face fitting was performed.","Hair remains a procedural scalp prototype, not production groom.","Procedural skin/hair microdetail is render evidence; portable glTF needs baked production maps.","Full deformation/animation acceptance remains a later gate."]}
-    (OUT/"appearance_metrics.json").write_text(json.dumps(metrics,indent=2),encoding="utf-8"); (OUT/"README.txt").write_text("MHR v1.0.1 Cinematic Appearance Prototype Gate v4\nEye-fit convergence + raised frontal hairline. Source topology/rig/morphs remain intact. Not final identity.\n",encoding="utf-8"); print(json.dumps(metrics,indent=2))
+    metrics={"model":"Meta Momentum Human Rig (MHR)","source_version":"v1.0.1","prototype":"cinematic_appearance_v5","mesh_object_count_source":len(meshes),"armature_object_count":len(arms),"bone_count":sum(len(a.data.bones) for a in arms),"shape_key_count":shape_keys,"head_bone":head_bone,"estimated_head_bounds_min":list(hmin),"estimated_head_bounds_max":list(hmax),"left_eye_center":list(lc),"right_eye_center":list(rc),"eye_radii":list(er),"added_objects":[o.name for o in lp+rp+brows+[hair]],"materials":[m.name for m in mats.values()],"full_body_views":full,"face_views":face,"glb":glb.name,"source_fbx_copy":fbx_copy.name,"gate_status":"READY_FOR_GPT_CINEMATIC_APPEARANCE_REVIEW","formal_final_character":False,"limitations":["No identity/reference face fitting was performed.","Hair remains a procedural scalp prototype, not production groom.","Procedural skin/hair microdetail is render evidence; portable glTF needs baked production maps.","Full deformation/animation acceptance remains a later gate."]}
+    (OUT/"appearance_metrics.json").write_text(json.dumps(metrics,indent=2),encoding="utf-8"); (OUT/"README.txt").write_text("MHR v1.0.1 Cinematic Appearance Prototype Gate v5\nFinal eye-depth convergence + scalp clearance. Source topology/rig/morphs remain intact. Not final identity.\n",encoding="utf-8"); print(json.dumps(metrics,indent=2))
 
 
 if __name__=="__main__": main()
