@@ -1,0 +1,90 @@
+name: Ten24 Remote ZIP Inventory
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - .github/workflows/ten24-remote-zip-inventory.yml
+  workflow_dispatch:
+
+jobs:
+  inventory:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Read Ten24 OBJ ZIP central directory using HTTP Range
+        env:
+          ZIP_URL: https://s3-us-west-2.amazonaws.com/samplescan/OBJ+Package.zip
+        run: |
+          mkdir -p artifacts/ten24-remote-inventory
+          python3 - <<'PY'
+          import json,os,re,struct,urllib.request
+          from pathlib import Path
+          url=os.environ['ZIP_URL']
+          def get_range(start,end=None):
+              req=urllib.request.Request(url,headers={'Range':f'bytes={start}-' if end is None else f'bytes={start}-{end}','User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req,timeout=60) as r:
+                  return r.read(), dict(r.headers)
+          # Establish exact length with one byte.
+          b,h=get_range(0,0)
+          cr=h.get('Content-Range','')
+          m=re.search(r'/([0-9]+)$',cr)
+          if not m: raise RuntimeError(f'No total length in Content-Range: {cr}')
+          total=int(m.group(1))
+          tail_size=min(total,4*1024*1024)
+          tail,th=get_range(total-tail_size,total-1)
+          # Find classic EOCD. Package is <4 GiB; reject Zip64 rather than guess.
+          sig=b'PK\x05\x06'
+          pos=tail.rfind(sig)
+          if pos<0: raise RuntimeError('EOCD not found in final 4 MiB')
+          eocd=tail[pos:pos+22]
+          if len(eocd)<22: raise RuntimeError('Truncated EOCD')
+          _,disk,cd_disk,n_disk,n_total,cd_size,cd_off,comment_len=struct.unpack('<4s4H2LH',eocd)
+          if any(x==0xffff for x in (n_disk,n_total)) or cd_size==0xffffffff or cd_off==0xffffffff:
+              raise RuntimeError('Zip64 central directory encountered; add explicit parser')
+          cd,hh=get_range(cd_off,cd_off+cd_size-1)
+          entries=[]; i=0
+          while i < len(cd):
+              if cd[i:i+4] != b'PK\x01\x02':
+                  raise RuntimeError(f'Bad central directory signature at {i}/{len(cd)}: {cd[i:i+4]!r}')
+              # central directory fixed header is 46 bytes
+              fixed=cd[i:i+46]
+              vals=struct.unpack('<4s6H3L5H2L',fixed)
+              method=vals[4]; crc=vals[7]; csize=vals[8]; usize=vals[9]
+              fnlen=vals[10]; extralen=vals[11]; comlen=vals[12]; local_off=vals[16]
+              name_b=cd[i+46:i+46+fnlen]
+              name=name_b.decode('utf-8','replace')
+              entries.append({'name':name,'compressed_size':csize,'uncompressed_size':usize,'method':method,'crc32':f'{crc:08x}','local_header_offset':local_off})
+              i += 46+fnlen+extralen+comlen
+          if len(entries)!=n_total:
+              raise RuntimeError(f'Entry count mismatch parsed={len(entries)} EOCD={n_total}')
+          # Rank entries relevant to head/face/high-res appearance and practical extraction.
+          keys=('head','face','skin','diff','color','albedo','normal','spec','rough','gloss','texture','map','eye','obj','jpg','jpeg','tga','png','tif','psd')
+          relevant=[e for e in entries if any(k in e['name'].lower() for k in keys)]
+          exts={}
+          for e in entries:
+              ext=Path(e['name']).suffix.lower() or '<none>'
+              exts[ext]=exts.get(ext,0)+1
+          report={
+              'source_url':url,
+              'total_zip_bytes':total,
+              'entry_count':len(entries),
+              'central_directory_bytes':cd_size,
+              'extensions':dict(sorted(exts.items())),
+              'entries':entries,
+              'relevant_entries':relevant,
+          }
+          out=Path('artifacts/ten24-remote-inventory')
+          (out/'inventory.json').write_text(json.dumps(report,indent=2),encoding='utf-8')
+          (out/'relevant.txt').write_text('\n'.join(f"{e['uncompressed_size']:>12}  m{e['method']}  {e['name']}" for e in relevant),encoding='utf-8')
+          print(f"ZIP {total} bytes, entries={len(entries)}, relevant={len(relevant)}, cd={cd_size} bytes")
+          print((out/'relevant.txt').read_text()[:30000])
+          PY
+          test -s artifacts/ten24-remote-inventory/inventory.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ten24-remote-zip-inventory
+          path: artifacts/ten24-remote-inventory/
+          retention-days: 14
