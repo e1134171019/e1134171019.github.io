@@ -1,0 +1,75 @@
+name: MHR Official Expression Gate
+
+on:
+  push:
+    branches:
+      - experiment/mhr-v1.0.1-cinematic-appearance-gate
+    paths:
+      - .github/workflows/mhr-official-expression-gate.yml
+      - tools/experiments/mhr_official_expression_probe.py
+      - tools/experiments/render_mhr_official_expression_candidates.py
+  workflow_dispatch:
+
+jobs:
+  official-expression-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download verified official MHR v1.0.1 assets
+        run: |
+          curl -L --fail --retry 3 -o /tmp/mhr-assets-v1.0.1.zip https://github.com/facebookresearch/MHR/releases/download/v1.0.1/assets.zip
+          echo "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94  /tmp/mhr-assets-v1.0.1.zip" | sha256sum -c -
+          unzip -q /tmp/mhr-assets-v1.0.1.zip -d .
+          test -f assets/mhr_model.pt
+          test -f assets/lod0.fbx
+          test -f assets/lod1.fbx
+          test -f assets/lod6.fbx
+          find assets -maxdepth 1 -type f -printf '%f %s bytes\n' | sort | tee /tmp/mhr-assets-manifest.txt
+
+      - name: Install official TorchScript probe runtime
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install 'numpy>=2,<3'
+          python3 -m pip install 'torch>=2.5' --index-url https://download.pytorch.org/whl/cpu
+          python3 - <<'PY'
+          import numpy, torch
+          print('numpy', numpy.__version__)
+          print('torch', torch.__version__)
+          PY
+
+      - name: Sweep official MHR expression space
+        run: |
+          python3 tools/experiments/mhr_official_expression_probe.py
+          test -s artifacts/mhr-official-expression-gate/mhr_official_expression_probe.json
+          test -s artifacts/mhr-official-expression-gate/neutral.obj
+          test -s artifacts/mhr-official-expression-gate/ridge_open_6mm.obj
+
+      - name: Install Blender render runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2
+          blender --version
+
+      - name: Render official expression candidates
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          blender --background --python tools/experiments/render_mhr_official_expression_candidates.py
+          test -s artifacts/mhr-official-expression-gate/mhr_official_expression_render_manifest.json
+          test -s artifacts/mhr-official-expression-gate/render_neutral_front.png
+          test -s artifacts/mhr-official-expression-gate/render_ridge_open_6mm_front.png
+
+      - name: Preserve official asset manifest
+        run: |
+          cp /tmp/mhr-assets-manifest.txt artifacts/mhr-official-expression-gate/MHR_ASSETS_MANIFEST.txt
+          cp assets/LICENSE.txt artifacts/mhr-official-expression-gate/MHR_ASSET_LICENSE.txt
+          find artifacts/mhr-official-expression-gate -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mhr-official-expression-gate
+          path: artifacts/mhr-official-expression-gate/
+          if-no-files-found: error
+          retention-days: 14
