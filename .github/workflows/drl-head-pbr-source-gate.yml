@@ -1,0 +1,128 @@
+name: DRL Head PBR Source Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - tools/experiments/drl_head_pbr_source_gate.py
+      - .github/workflows/drl-head-pbr-source-gate.yml
+  workflow_dispatch:
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download official DRL archive and extract only source-gate inputs
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-head-pbr-source-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-head-pbr-source-gate/source-archive-sha256.txt
+          python3 - <<'PY'
+          from pathlib import Path
+          import zipfile
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          wanted={
+            'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+            'Textures/Marcus_38_diffuse.png':'Marcus_38_diffuse.png',
+            'Textures/Marcus_38_normal.png':'Marcus_38_normal.png',
+            'Textures/Marcus_38_glossiness.png':'Marcus_38_glossiness.png',
+            'Textures/Marcus_01_specular.png':'Marcus_01_specular.png',
+          }
+          for src,dst in wanted.items():
+              info=z.getinfo(src)
+              data=z.read(info)
+              out=Path('/tmp/drl')/dst
+              out.write_bytes(data)
+              print(src, len(data), f'{info.CRC:08x}')
+          PY
+          for f in /tmp/drl/Marcus_PBR_Sample_01.obj /tmp/drl/Marcus_38_diffuse.png /tmp/drl/Marcus_38_normal.png /tmp/drl/Marcus_38_glossiness.png /tmp/drl/Marcus_01_specular.png; do test -s "$f"; done
+
+      - name: Install lookdev tools and build 4K diagnostic proxies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil imagemagick libegl1 libgl1 libgles2
+          identify /tmp/drl/Marcus_38_diffuse.png /tmp/drl/Marcus_38_normal.png /tmp/drl/Marcus_38_glossiness.png /tmp/drl/Marcus_01_specular.png | tee artifacts/drl-head-pbr-source-gate/original-map-metadata.txt
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_diffuse.png -resize '4096x4096>' /tmp/drl/diffuse_4k.png
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_normal.png -resize '4096x4096>' /tmp/drl/normal_4k.png
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_glossiness.png -resize '4096x4096>' /tmp/drl/gloss_4k.png
+          cp /tmp/drl/Marcus_01_specular.png /tmp/drl/specular.png
+          identify /tmp/drl/diffuse_4k.png /tmp/drl/normal_4k.png /tmp/drl/gloss_4k.png /tmp/drl/specular.png | tee artifacts/drl-head-pbr-source-gate/render-proxy-metadata.txt
+
+      - name: Preserve current official source and usage pages
+        run: |
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o artifacts/drl-head-pbr-source-gate/sample-model.html https://www.digitalrealitylab.com/sample-model/
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o artifacts/drl-head-pbr-source-gate/download-page.html https://www.digitalrealitylab.com/download/head-pbr-scan-sample/
+          grep -Eqi 'commercial|personal' artifacts/drl-head-pbr-source-gate/sample-model.html
+
+      - name: Render real DRL scan PBR source
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DIFFUSE: /tmp/drl/diffuse_4k.png
+          DRL_NORMAL: /tmp/drl/normal_4k.png
+          DRL_GLOSS: /tmp/drl/gloss_4k.png
+          DRL_SPECULAR: /tmp/drl/specular.png
+        run: |
+          blender --background --python tools/experiments/drl_head_pbr_source_gate.py
+          test -s artifacts/drl-head-pbr-source-gate/drl_head_pbr_source_metrics.json
+          for f in source_neg_y.png source_pos_y.png source_pos_x.png source_neg_x.png source_pos_z.png source_neg_z.png diagonal_0.png diagonal_1.png diagonal_2.png diagonal_3.png; do
+            test -s "artifacts/drl-head-pbr-source-gate/$f"
+          done
+
+      - name: Reject blank images missing UV or failed real-map load
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageStat
+          import json
+          out=Path('artifacts/drl-head-pbr-source-gate')
+          names=['source_neg_y.png','source_pos_y.png','source_pos_x.png','source_neg_x.png','source_pos_z.png','source_neg_z.png','diagonal_0.png','diagonal_1.png','diagonal_2.png','diagonal_3.png']
+          for name in names:
+              im=Image.open(out/name).convert('RGB')
+              bg=im.getpixel((2,2))
+              changed=sum(1 for p in im.getdata() if sum(abs(p[i]-bg[i]) for i in range(3))>24)
+              if changed<4000 or max(ImageStat.Stat(im).stddev)<5.0:
+                  raise SystemExit(f'blank/flat DRL render {name}, changed={changed}')
+          m=json.loads((out/'drl_head_pbr_source_metrics.json').read_text())
+          head=[o for o in m['mesh_objects'] if o['name']==m['head_object']][0]
+          if not head['uv_layers']: raise SystemExit('DRL source head has no UV')
+          for key in ['diffuse','normal','glossiness','specular']:
+              w,h=m['render_maps'][key]['size']
+              if w<1024 or h<1024: raise SystemExit(f'DRL real map failed to load: {key} {w}x{h}')
+          if m.get('redistribution_policy')!='No original DRL mesh or source textures are copied into the workflow artifact.':
+              raise SystemExit('DRL source gate redistribution guard missing')
+          PY
+
+      - name: Build GPT source-review contact sheet
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/drl-head-pbr-source-gate')
+          files=['source_neg_y.png','source_pos_y.png','source_pos_x.png','source_neg_x.png','source_pos_z.png','source_neg_z.png','diagonal_0.png','diagonal_1.png','diagonal_2.png','diagonal_3.png']
+          w=h=330; cols=5
+          sheet=Image.new('RGB',(w*cols,(h+30)*2),'white')
+          for i,f in enumerate(files):
+              im=Image.open(out/f).convert('RGB').resize((w,h))
+              x=(i%cols)*w; y=(i//cols)*(h+30)
+              sheet.paste(im,(x,y+30)); ImageDraw.Draw(sheet).text((x+6,y+8),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_drl_head_pbr_source_contact_sheet.jpg',quality=95)
+          PY
+          test -s artifacts/drl-head-pbr-source-gate/00_drl_head_pbr_source_contact_sheet.jpg
+
+      - name: Assert source asset was not staged for redistribution
+        run: |
+          ! find artifacts/drl-head-pbr-source-gate -type f \( -iname '*.obj' -o -iname '*diffuse*.png' -o -iname '*normal*.png' -o -iname '*gloss*.png' -o -iname '*specular*.png' -o -iname '*.ztl' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drl-head-pbr-source-gate
+          path: artifacts/drl-head-pbr-source-gate/
+          if-no-files-found: error
+          retention-days: 14
