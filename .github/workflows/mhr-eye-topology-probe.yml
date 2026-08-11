@@ -9,12 +9,13 @@ on:
       - tools/experiments/mhr_eye_topology_probe.py
       - tools/experiments/mhr_eye_patch_mask_probe.py
       - tools/experiments/mhr_eye_shape_response_probe.py
+      - tools/experiments/mhr_eye_aperture_gate.py
   workflow_dispatch:
 
 jobs:
   probe-eye-topology:
     runs-on: ubuntu-24.04
-    timeout-minutes: 22
+    timeout-minutes: 26
     steps:
       - uses: actions/checkout@v4
       - name: Download verified official MHR v1.0.1 assets
@@ -48,9 +49,19 @@ jobs:
           blender --background --python tools/experiments/mhr_eye_shape_response_probe.py
           test -s artifacts/mhr-eye-topology-probe/mhr_eye_shape_response_probe.json
           test -s artifacts/mhr-eye-topology-probe/eye_shape_basis.png
+      - name: Execute controlled eye aperture diagnostic
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          blender --background --python tools/experiments/mhr_eye_aperture_gate.py
+          test -s artifacts/mhr-eye-aperture-gate/mhr_eye_aperture_gate.json
+          test -s artifacts/mhr-eye-aperture-gate/eye_aperture_narrow_front.png
+          test -s artifacts/mhr-eye-aperture-gate/eye_aperture_strict_front.png
       - uses: actions/upload-artifact@v4
         with:
           name: mhr-eye-topology-probe
-          path: artifacts/mhr-eye-topology-probe/
+          path: |
+            artifacts/mhr-eye-topology-probe/
+            artifacts/mhr-eye-aperture-gate/
           if-no-files-found: error
           retention-days: 14
