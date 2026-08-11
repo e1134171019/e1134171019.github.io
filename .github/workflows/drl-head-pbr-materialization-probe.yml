@@ -1,0 +1,113 @@
+name: DRL Head PBR Materialization Probe
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - .github/workflows/drl-head-pbr-materialization-probe.yml
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch official DRL sample and download pages
+        run: |
+          mkdir -p artifacts/drl-head-pbr-probe
+          UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128 Safari/537.36'
+          curl -L --fail --retry 3 -A "$UA" -o artifacts/drl-head-pbr-probe/sample-model.html https://www.digitalrealitylab.com/sample-model/
+          curl -L --fail --retry 3 -A "$UA" -o artifacts/drl-head-pbr-probe/head-pbr-download.html https://www.digitalrealitylab.com/download/head-pbr-scan-sample/
+          test -s artifacts/drl-head-pbr-probe/sample-model.html
+          test -s artifacts/drl-head-pbr-probe/head-pbr-download.html
+
+      - name: Extract and classify hidden download candidates
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from html import unescape
+          from urllib.parse import urljoin
+          import json,re
+          base='https://www.digitalrealitylab.com/download/head-pbr-scan-sample/'
+          texts=[Path('artifacts/drl-head-pbr-probe/sample-model.html').read_text(errors='ignore'),Path('artifacts/drl-head-pbr-probe/head-pbr-download.html').read_text(errors='ignore')]
+          hrefs=[]
+          for text in texts:
+              text=unescape(text)
+              for m in re.finditer(r'''(?:href|data-downloadurl|data-url|data-href)\s*=\s*["']([^"']+)["']''',text,re.I):
+                  hrefs.append(urljoin(base,m.group(1)))
+              # WordPress Download Manager commonly exposes package ids / wpdmdl endpoints in script or onclick data.
+              for m in re.finditer(r'''https?://[^"'<>\s]+''',text,re.I):
+                  hrefs.append(m.group(0).replace('\\/','/'))
+          uniq=[]
+          for u in hrefs:
+              if u not in uniq: uniq.append(u)
+          keys=('wpdmdl','download','package','attachment','.zip','.7z','.rar','.tar','.obj','.ztl')
+          candidates=[u for u in uniq if any(k in u.lower() for k in keys)]
+          # Keep same-site links first and remove obvious nav/social resources.
+          candidates=sorted(candidates,key=lambda u:(0 if 'digitalrealitylab.com' in u else 1,len(u)))
+          report={'all_url_count':len(uniq),'candidate_count':len(candidates),'candidates':candidates}
+          Path('artifacts/drl-head-pbr-probe/candidates.json').write_text(json.dumps(report,indent=2))
+          print(json.dumps(report,indent=2))
+          PY
+
+      - name: Probe candidate redirect and content metadata
+        run: |
+          python3 - <<'PY'
+          import json,subprocess
+          from pathlib import Path
+          candidates=json.loads(Path('artifacts/drl-head-pbr-probe/candidates.json').read_text())['candidates']
+          rows=[]
+          for u in candidates[:80]:
+              cmd=['curl','-L','-sS','-A','Mozilla/5.0','--max-time','25','--range','0-0','-D','-','-o','/dev/null',u]
+              p=subprocess.run(cmd,text=True,capture_output=True)
+              headers=p.stdout
+              blocks=[b for b in headers.replace('\r','').split('\n\n') if b.strip()]
+              last=blocks[-1] if blocks else headers
+              meta={'url':u,'exit':p.returncode,'headers':last[-5000:]}
+              rows.append(meta)
+          Path('artifacts/drl-head-pbr-probe/probe-results.json').write_text(json.dumps(rows,indent=2))
+          print(json.dumps(rows,indent=2))
+          PY
+
+      - name: Identify binary materialization route
+        run: |
+          python3 - <<'PY'
+          import json,re
+          from pathlib import Path
+          rows=json.loads(Path('artifacts/drl-head-pbr-probe/probe-results.json').read_text())
+          viable=[]
+          for row in rows:
+              h=row['headers'].lower()
+              if row['exit'] != 0: continue
+              content_type=''
+              m=re.findall(r'content-type:\s*([^\n]+)',h)
+              if m: content_type=m[-1].strip()
+              cd=''
+              m=re.findall(r'content-disposition:\s*([^\n]+)',h)
+              if m: cd=m[-1].strip()
+              cl=None
+              m=re.findall(r'content-(?:range|length):\s*([^\n]+)',h)
+              if m: cl=m[-1].strip()
+              score=0
+              if 'attachment' in cd: score+=5
+              if any(x in content_type for x in ['zip','octet-stream','x-7z','rar']): score+=4
+              if any(x in row['url'].lower() for x in ['wpdmdl','.zip','.7z','.rar']): score+=2
+              if content_type and 'text/html' not in content_type: score+=1
+              if score:
+                  viable.append({'score':score,'url':row['url'],'content_type':content_type,'content_disposition':cd,'content_size_header':cl})
+          viable.sort(key=lambda x:-x['score'])
+          out={'viable':viable,'status':'PASS_ROUTE_FOUND' if viable else 'BLOCKED_NO_BINARY_ROUTE_FROM_PUBLIC_HTML'}
+          Path('artifacts/drl-head-pbr-probe/materialization-route.json').write_text(json.dumps(out,indent=2))
+          print(json.dumps(out,indent=2))
+          PY
+          test -s artifacts/drl-head-pbr-probe/materialization-route.json
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drl-head-pbr-materialization-probe
+          path: artifacts/drl-head-pbr-probe/
+          if-no-files-found: error
+          retention-days: 14
