@@ -42,6 +42,10 @@ jobs:
           GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
           MHR_FBX: assets/lod1.fbx
         run: |
+          # Armature Modifier performs the skin deformation. Do NOT also object-parent
+          # the GNM head to the same armature, or the armature transform is applied twice.
+          sed -i '/head_obj.parent = arm/d' tools/experiments/gnm_mhr_head_bind_gate.py
+          sed -i '/head_obj.parent_type = "OBJECT"/d' tools/experiments/gnm_mhr_head_bind_gate.py
           blender --background --python tools/experiments/gnm_mhr_head_bind_gate.py
           test -s artifacts/gnm-mhr-head-bind-gate/gnm_mhr_head_bind_metrics.json
           test -s artifacts/gnm-mhr-head-bind-gate/gnm_head_bound_to_mhr_rig.glb
@@ -49,6 +53,34 @@ jobs:
             test -s "artifacts/gnm-mhr-head-bind-gate/${pose}_front.png"
             test -s "artifacts/gnm-mhr-head-bind-gate/${pose}_three_quarter.png"
           done
+
+      - name: Reject blank renders and implausible small-pose deformation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image
+          import json, math
+          out=Path('artifacts/gnm-mhr-head-bind-gate')
+          # Blank-image detector: count pixels materially different from a corner background sample.
+          for name in ['neutral_front.png','head_turn_front.png','head_tilt_front.png','eye_aim_front.png']:
+              im=Image.open(out/name).convert('RGB')
+              bg=im.getpixel((2,2))
+              changed=0
+              for r,g,b in im.getdata():
+                  if abs(r-bg[0])+abs(g-bg[1])+abs(b-bg[2]) > 24:
+                      changed += 1
+              if changed < 4000:
+                  raise SystemExit(f'blank/near-blank render: {name}, changed_pixels={changed}')
+          m=json.loads((out/'gnm_mhr_head_bind_metrics.json').read_text())
+          pm=m['pose_metrics']
+          # 10–15 degree diagnostic rotations should deform a human head by centimeters,
+          # not move it hundreds of millimeters. These are safety gates, not quality targets.
+          limits={'head_turn':150.0,'head_tilt':120.0,'eye_aim':80.0}
+          for pose,limit in limits.items():
+              val=float(pm[pose]['max_vertex_displacement_mm'])
+              if not math.isfinite(val) or val > limit:
+                  raise SystemExit(f'implausible bind displacement: {pose} max={val:.3f}mm limit={limit}mm')
+          PY
 
       - name: Build review contact sheet and provenance
         run: |
@@ -74,7 +106,7 @@ jobs:
           (out/'provenance.json').write_text(json.dumps({
              'GNM':{'commit':'98450b3c943101d5859ac1ceb7331ec918ebc321','npz_sha256':'868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055'},
              'MHR':{'version':'v1.0.1','assets_zip_sha256':'e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94'},
-             'gate':'map GNM neck/head/left_eye/right_eye LBS weights to MHR c_neck/c_head/l_eye/r_eye and verify small-pose deformation'
+             'gate':'map GNM neck/head/left_eye/right_eye LBS weights to MHR c_neck/c_head/l_eye/r_eye; Armature Modifier only; verify small-pose deformation and nonblank renders'
           },indent=2),encoding='utf-8')
           PY
           test -s artifacts/gnm-mhr-head-bind-gate/00_gnm_mhr_head_bind_contact_sheet.jpg
