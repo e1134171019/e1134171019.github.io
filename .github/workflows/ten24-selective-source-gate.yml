@@ -1,0 +1,137 @@
+name: Ten24 Selective Source Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - tools/experiments/ten24_source_visual_gate.py
+      - .github/workflows/ten24-selective-source-gate.yml
+  workflow_dispatch:
+
+jobs:
+  source-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Selectively extract 100k OBJ 8K identity color and source normal via S3 ranges
+        env:
+          ZIP_URL: https://s3-us-west-2.amazonaws.com/samplescan/OBJ+Package.zip
+        run: |
+          mkdir -p /tmp/ten24 artifacts/ten24-source-visual-gate
+          python3 - <<'PY'
+          import binascii,json,os,re,struct,urllib.request,zlib
+          from pathlib import Path
+          url=os.environ['ZIP_URL']
+          targets={
+            'OBJ Package/OBJ/Decimated/Ten24_Sample_100k.OBJ':'/tmp/ten24/Ten24_Sample_100k.OBJ',
+            'OBJ Package/Colour Maps/JPG/Colour_8k.jpg':'/tmp/ten24/Colour_8k.jpg',
+            'OBJ Package/Normal Maps/Level_01_Normal.PSD':'/tmp/ten24/Level_01_Normal.PSD',
+          }
+          def get_range(a,b):
+              req=urllib.request.Request(url,headers={'Range':f'bytes={a}-{b}','User-Agent':'Mozilla/5.0'})
+              with urllib.request.urlopen(req,timeout=120) as r: return r.read(),dict(r.headers)
+          _,h=get_range(0,0); m=re.search(r'/([0-9]+)$',h.get('Content-Range',''))
+          if not m: raise RuntimeError('Cannot determine ZIP length')
+          total=int(m.group(1)); tail_n=min(total,4*1024*1024); tail,_=get_range(total-tail_n,total-1)
+          p=tail.rfind(b'PK\x05\x06')
+          if p<0: raise RuntimeError('EOCD missing')
+          _,disk,cd_disk,n_disk,n_total,cd_size,cd_off,comment=struct.unpack('<4s4H2LH',tail[p:p+22])
+          cd,_=get_range(cd_off,cd_off+cd_size-1)
+          entries={}; i=0
+          while i<len(cd):
+              vals=struct.unpack('<4s6H3L5H2L',cd[i:i+46])
+              method,crc,csize,usize,fnlen,extralen,comlen,local_off=vals[4],vals[7],vals[8],vals[9],vals[10],vals[11],vals[12],vals[16]
+              name=cd[i+46:i+46+fnlen].decode('utf-8','replace')
+              entries[name]={'method':method,'crc':crc,'csize':csize,'usize':usize,'local_off':local_off}
+              i+=46+fnlen+extralen+comlen
+          report=[]
+          for name,dest in targets.items():
+              e=entries.get(name)
+              if not e: raise RuntimeError(f'Missing target entry: {name}')
+              # Read local header to find exact compressed data start.
+              lh,_=get_range(e['local_off'],e['local_off']+4095)
+              if lh[:4]!=b'PK\x03\x04': raise RuntimeError(f'Bad local header {name}')
+              vals=struct.unpack('<4s5H3L2H',lh[:30]); fnlen,extralen=vals[-2],vals[-1]
+              data_start=e['local_off']+30+fnlen+extralen
+              comp,_=get_range(data_start,data_start+e['csize']-1)
+              if len(comp)!=e['csize']: raise RuntimeError(f'Compressed size mismatch {name}: {len(comp)} vs {e["csize"]}')
+              if e['method']==0: raw=comp
+              elif e['method']==8: raw=zlib.decompress(comp,-15)
+              else: raise RuntimeError(f'Unsupported ZIP method {e["method"]} for {name}')
+              if len(raw)!=e['usize']: raise RuntimeError(f'Uncompressed size mismatch {name}')
+              crc=binascii.crc32(raw)&0xffffffff
+              if crc!=e['crc']: raise RuntimeError(f'CRC mismatch {name}: {crc:08x} != {e["crc"]:08x}')
+              Path(dest).write_bytes(raw)
+              report.append({'entry':name,'dest':dest,'compressed_bytes':e['csize'],'bytes':len(raw),'crc32':f'{crc:08x}'})
+              print(report[-1])
+          Path('artifacts/ten24-source-visual-gate/selective_materialization.json').write_text(json.dumps({'source_url':url,'entries':report},indent=2))
+          PY
+          test -s /tmp/ten24/Ten24_Sample_100k.OBJ
+          test -s /tmp/ten24/Colour_8k.jpg
+          test -s /tmp/ten24/Level_01_Normal.PSD
+
+      - name: Preserve current official Ten24 usage statement
+        run: |
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o artifacts/ten24-source-visual-gate/ten24-sample-scan-source.html https://ten24.info/sample-scan/
+          grep -qi 'commercial and personal projects' artifacts/ten24-source-visual-gate/ten24-sample-scan-source.html
+          grep -qi 'provide us with a credit' artifacts/ten24-source-visual-gate/ten24-sample-scan-source.html
+
+      - name: Install Blender source diagnostic runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2 python3-pil
+
+      - name: Render real Ten24 source asset
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          TEN24_OBJ: /tmp/ten24/Ten24_Sample_100k.OBJ
+          TEN24_COLOR: /tmp/ten24/Colour_8k.jpg
+          TEN24_NORMAL: /tmp/ten24/Level_01_Normal.PSD
+        run: |
+          blender --background --python tools/experiments/ten24_source_visual_gate.py
+          test -s artifacts/ten24-source-visual-gate/ten24_source_metrics.json
+          test -s artifacts/ten24-source-visual-gate/ten24_source_100k_diagnostic.glb
+          for f in source_neg_y.png source_pos_y.png source_pos_x.png source_neg_x.png source_pos_z.png source_neg_z.png upper_neg_y.png upper_threeq.png lower_neg_y.png lower_threeq.png; do
+            test -s "artifacts/ten24-source-visual-gate/$f"
+          done
+
+      - name: Reject blank source renders and invalid texture dimensions
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageStat
+          import json
+          out=Path('artifacts/ten24-source-visual-gate')
+          for f in ['source_neg_y.png','source_pos_y.png','source_pos_x.png','source_neg_x.png','source_pos_z.png','source_neg_z.png','upper_neg_y.png','upper_threeq.png','lower_neg_y.png','lower_threeq.png']:
+              im=Image.open(out/f).convert('RGB'); bg=im.getpixel((2,2)); changed=sum(1 for p in im.getdata() if sum(abs(p[i]-bg[i]) for i in range(3))>24)
+              if changed<3000 or max(ImageStat.Stat(im).stddev)<5: raise SystemExit(f'blank/flat render {f}, changed={changed}')
+          m=json.loads((out/'ten24_source_metrics.json').read_text())
+          if m['images']['color']['width'] < 7000 or m['images']['color']['height'] < 7000: raise SystemExit(f'8K color not loaded: {m["images"]["color"]}')
+          if m['images']['normal']['width'] < 7000 or m['images']['normal']['height'] < 7000: raise SystemExit(f'high-res normal not loaded: {m["images"]["normal"]}')
+          if not m['uv_layers']: raise SystemExit('source OBJ has no UV layer')
+          PY
+
+      - name: Build source review sheet
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/ten24-source-visual-gate')
+          files=['source_neg_y.png','source_pos_y.png','source_pos_x.png','source_neg_x.png','source_pos_z.png','source_neg_z.png','upper_neg_y.png','upper_threeq.png','lower_neg_y.png','lower_threeq.png']
+          w=h=330; cols=5; rows=2
+          sheet=Image.new('RGB',(w*cols,(h+30)*rows),'white')
+          for i,f in enumerate(files):
+              im=Image.open(out/f).convert('RGB').resize((w,h)); x=(i%cols)*w; y=(i//cols)*(h+30); sheet.paste(im,(x,y+30)); ImageDraw.Draw(sheet).text((x+6,y+8),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_ten24_source_contact_sheet.jpg',quality=94)
+          PY
+          test -s artifacts/ten24-source-visual-gate/00_ten24_source_contact_sheet.jpg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ten24-source-visual-gate
+          path: artifacts/ten24-source-visual-gate/
+          if-no-files-found: error
+          retention-days: 14
