@@ -26,7 +26,7 @@ jobs:
           echo "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94  /tmp/mhr-assets-v1.0.1.zip" | sha256sum -c -
           unzip -q /tmp/mhr-assets-v1.0.1.zip -d .
           test -f assets/lod1.fbx
-          test -f assets/LICENSE
+          find . -maxdepth 2 -iname 'LICENSE*' -print
 
       - name: Install Blender
         run: |
@@ -40,7 +40,14 @@ jobs:
 
       - name: Preserve asset license
         run: |
-          cp assets/LICENSE artifacts/mhr-human-carrier-gate/MHR_ASSET_LICENSE.txt
+          if [ -f assets/LICENSE ]; then
+            cp assets/LICENSE artifacts/mhr-human-carrier-gate/MHR_ASSET_LICENSE.txt
+          elif [ -f LICENSE ]; then
+            cp LICENSE artifacts/mhr-human-carrier-gate/MHR_ASSET_LICENSE.txt
+          else
+            echo "No LICENSE found after verified v1.0.1 asset extraction" >&2
+            exit 1
+          fi
 
       - name: Show generated artifacts
         run: |
