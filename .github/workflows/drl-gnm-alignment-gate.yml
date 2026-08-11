@@ -1,0 +1,107 @@
+name: DRL GNM Geometry Alignment Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - tools/experiments/drl_gnm_alignment_gate.py
+      - .github/workflows/drl-gnm-alignment-gate.yml
+  workflow_dispatch:
+
+jobs:
+  alignment-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor geometry without staging source asset
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-alignment-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-alignment-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          info=z.getinfo('OBJ/Marcus_PBR_Sample_01.obj')
+          data=z.read(info)
+          Path('/tmp/drl/Marcus_PBR_Sample_01.obj').write_bytes(data)
+          print({'bytes':len(data),'crc32':f'{info.CRC:08x}'})
+          PY
+          test -s /tmp/drl/Marcus_PBR_Sample_01.obj
+
+      - name: Install CPU alignment runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil libegl1 libgl1 libgles2
+
+      - name: Execute canonical transform and robust face ICP
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+        run: |
+          blender --background --python tools/experiments/drl_gnm_alignment_gate.py
+          test -s artifacts/drl-gnm-alignment-gate/drl_gnm_alignment_metrics.json
+          for f in overlay_front.png overlay_three_quarter.png overlay_side.png overlay_back.png face_overlay_front.png face_overlay_three_quarter.png; do
+            test -s "artifacts/drl-gnm-alignment-gate/$f"
+          done
+
+      - name: Reject blank overlays and verify numeric contract
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageStat
+          import json,math
+          out=Path('artifacts/drl-gnm-alignment-gate')
+          m=json.loads((out/'drl_gnm_alignment_metrics.json').read_text())
+          if not m.get('numeric_gate_pass'): raise SystemExit('alignment metric says FAIL')
+          for direction in ['drl_to_gnm_face','gnm_to_drl_face']:
+              s=m[direction]
+              if s['median_mm']>15 or s['p90_mm']>30: raise SystemExit(f'{direction} exceeds gate: {s}')
+          for f in ['overlay_front.png','overlay_three_quarter.png','overlay_side.png','overlay_back.png','face_overlay_front.png','face_overlay_three_quarter.png']:
+              im=Image.open(out/f).convert('RGB'); st=ImageStat.Stat(im); bg=im.getpixel((2,2)); changed=sum(1 for p in im.getdata() if sum(abs(p[i]-bg[i]) for i in range(3))>22)
+              if changed<3500 or max(st.stddev)<6: raise SystemExit(f'blank/flat overlay {f}: changed={changed}')
+          PY
+
+      - name: Build alignment review sheet
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/drl-gnm-alignment-gate')
+          files=['overlay_front.png','overlay_three_quarter.png','overlay_side.png','overlay_back.png','face_overlay_front.png','face_overlay_three_quarter.png']
+          existing=[f for f in files if (out/f).is_file()]
+          if not existing: raise SystemExit(0)
+          w=h=360; cols=3; rows=(len(existing)+cols-1)//cols
+          sheet=Image.new('RGB',(w*cols,(h+32)*rows),'white')
+          for i,f in enumerate(existing):
+              im=Image.open(out/f).convert('RGB').resize((w,h)); x=(i%cols)*w; y=(i//cols)*(h+32); sheet.paste(im,(x,y+32)); ImageDraw.Draw(sheet).text((x+7,y+9),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_drl_gnm_alignment_contact_sheet.jpg',quality=95)
+          PY
+
+      - name: Assert source geometry was not staged for redistribution
+        if: always()
+        run: |
+          ! find artifacts/drl-gnm-alignment-gate -type f \( -iname '*.obj' -o -iname '*.ztl' -o -iname '*.fbx' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-alignment-gate
+          path: artifacts/drl-gnm-alignment-gate/
+          if-no-files-found: warn
+          retention-days: 14
