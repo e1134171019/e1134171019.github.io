@@ -1,0 +1,87 @@
+name: GNM MHR Head Bind Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-head-eye-gate
+    paths:
+      - tools/experiments/gnm_mhr_head_bind_gate.py
+      - .github/workflows/gnm-mhr-head-bind-gate.yml
+  workflow_dispatch:
+
+jobs:
+  head-bind-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire verified official MHR v1.0.1
+        run: |
+          curl -L --fail --retry 3 -o /tmp/mhr-assets-v1.0.1.zip https://github.com/facebookresearch/MHR/releases/download/v1.0.1/assets.zip
+          echo "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94  /tmp/mhr-assets-v1.0.1.zip" | sha256sum -c -
+          unzip -q /tmp/mhr-assets-v1.0.1.zip -d .
+          test -s assets/lod1.fbx
+
+      - name: Install Blender binding runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2 python3-pil
+
+      - name: Bind GNM skin weights to actual MHR bones and test small poses
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          MHR_FBX: assets/lod1.fbx
+        run: |
+          blender --background --python tools/experiments/gnm_mhr_head_bind_gate.py
+          test -s artifacts/gnm-mhr-head-bind-gate/gnm_mhr_head_bind_metrics.json
+          test -s artifacts/gnm-mhr-head-bind-gate/gnm_head_bound_to_mhr_rig.glb
+          for pose in neutral head_turn head_tilt eye_aim; do
+            test -s "artifacts/gnm-mhr-head-bind-gate/${pose}_front.png"
+            test -s "artifacts/gnm-mhr-head-bind-gate/${pose}_three_quarter.png"
+          done
+
+      - name: Build review contact sheet and provenance
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          import json,shutil
+          out=Path('artifacts/gnm-mhr-head-bind-gate')
+          poses=['neutral','head_turn','head_tilt','eye_aim']
+          files=[]
+          for p in poses:
+              files += [f'{p}_front.png',f'{p}_three_quarter.png']
+          w=h=420
+          sheet=Image.new('RGB',(w*4,(h+34)*2),'white')
+          for i,name in enumerate(files):
+              im=Image.open(out/name).convert('RGB').resize((w,h))
+              tile=Image.new('RGB',(w,h+34),'white');tile.paste(im,(0,34))
+              ImageDraw.Draw(tile).text((8,9),name.replace('.png',''),fill='black')
+              sheet.paste(tile,((i%4)*w,(i//4)*(h+34)))
+          sheet.save(out/'00_gnm_mhr_head_bind_contact_sheet.jpg',quality=94)
+          shutil.copy('/tmp/GNM/LICENSE',out/'GNM_LICENSE_APACHE_2_0.txt')
+          shutil.copy('assets/LICENSE.txt',out/'MHR_LICENSE_APACHE_2_0.txt')
+          (out/'provenance.json').write_text(json.dumps({
+             'GNM':{'commit':'98450b3c943101d5859ac1ceb7331ec918ebc321','npz_sha256':'868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055'},
+             'MHR':{'version':'v1.0.1','assets_zip_sha256':'e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94'},
+             'gate':'map GNM neck/head/left_eye/right_eye LBS weights to MHR c_neck/c_head/l_eye/r_eye and verify small-pose deformation'
+          },indent=2),encoding='utf-8')
+          PY
+          test -s artifacts/gnm-mhr-head-bind-gate/00_gnm_mhr_head_bind_contact_sheet.jpg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gnm-mhr-head-bind-gate
+          path: artifacts/gnm-mhr-head-bind-gate/
+          if-no-files-found: error
+          retention-days: 14
