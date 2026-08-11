@@ -53,19 +53,19 @@ def make_skin_material():
     nodes = mat.node_tree.nodes
     links = mat.node_tree.links
     bsdf = nodes.get("Principled BSDF")
-    principled_input(bsdf, "Base Color", (0.33, 0.145, 0.085, 1.0))
-    principled_input(bsdf, "Roughness", 0.48)
+    principled_input(bsdf, "Base Color", (0.30, 0.125, 0.070, 1.0))
+    principled_input(bsdf, "Roughness", 0.50)
     principled_input(bsdf, "IOR", 1.42)
-    principled_input(bsdf, "Subsurface Weight", 0.08)
+    principled_input(bsdf, "Subsurface Weight", 0.075)
 
     noise = nodes.new("ShaderNodeTexNoise")
-    noise.inputs["Scale"].default_value = 115.0
-    noise.inputs["Detail"].default_value = 4.0
-    noise.inputs["Roughness"].default_value = 0.65
+    noise.inputs["Scale"].default_value = 125.0
+    noise.inputs["Detail"].default_value = 4.5
+    noise.inputs["Roughness"].default_value = 0.67
 
     bump = nodes.new("ShaderNodeBump")
-    bump.inputs["Strength"].default_value = 0.13
-    bump.inputs["Distance"].default_value = 0.0015
+    bump.inputs["Strength"].default_value = 0.10
+    bump.inputs["Distance"].default_value = 0.0012
     links.new(noise.outputs["Fac"], bump.inputs["Height"])
     links.new(bump.outputs["Normal"], bsdf.inputs["Normal"])
     return mat
@@ -87,7 +87,7 @@ def assign_material(objects, mat):
         obj.data.materials.append(mat)
 
 
-def local_front_y(meshes, x, z, dx=0.028, dz=0.025):
+def local_front_y(meshes, x, z, dx=0.021, dz=0.018):
     ys = []
     for obj in meshes:
         for p in world_vertices(obj):
@@ -113,8 +113,7 @@ def find_head_bone(armature):
     if not armature:
         return None
     names = [b.name for b in armature.data.bones]
-    exact = ["head", "Head", "HEAD", "b_head", "joint_head"]
-    for n in exact:
+    for n in ["head", "Head", "HEAD", "b_head", "joint_head", "c_head"]:
         if n in names:
             return n
     for n in names:
@@ -137,37 +136,31 @@ def parent_to_bone_keep_world(obj, armature, bone_name):
 
 def add_eye(meshes, side_x, eye_z, armature, head_bone, mats):
     surface_y = local_front_y(meshes, side_x, eye_z)
-    center_y = surface_y + 0.0105
+    center_y = surface_y + 0.0108
     sclera = add_uv_sphere(
         f"Eye_{'L' if side_x > 0 else 'R'}_Sclera",
         (side_x, center_y, eye_z),
-        (0.0165, 0.0120, 0.0135),
+        (0.0162, 0.0120, 0.0132),
         mats["sclera"],
     )
-    iris_y = surface_y - 0.0014
+    iris_y = surface_y - 0.0010
     iris = add_uv_sphere(
         f"Eye_{'L' if side_x > 0 else 'R'}_Iris",
         (side_x, iris_y, eye_z),
-        (0.0062, 0.0021, 0.0062),
-        mats["iris"],
-        40,
-        20,
+        (0.0060, 0.0018, 0.0060),
+        mats["iris"], 40, 20,
     )
     pupil = add_uv_sphere(
         f"Eye_{'L' if side_x > 0 else 'R'}_Pupil",
-        (side_x, iris_y - 0.0015, eye_z),
-        (0.0026, 0.0010, 0.0026),
-        mats["pupil"],
-        32,
-        16,
+        (side_x, iris_y - 0.0012, eye_z),
+        (0.0025, 0.0008, 0.0025),
+        mats["pupil"], 32, 16,
     )
     highlight = add_uv_sphere(
         f"Eye_{'L' if side_x > 0 else 'R'}_Catchlight",
-        (side_x - 0.0035, iris_y - 0.0020, eye_z + 0.0035),
-        (0.00115, 0.0007, 0.00115),
-        mats["catchlight"],
-        24,
-        12,
+        (side_x - 0.0033, iris_y - 0.0018, eye_z + 0.0033),
+        (0.0010, 0.00055, 0.0010),
+        mats["catchlight"], 24, 12,
     )
     for obj in (sclera, iris, pupil, highlight):
         parent_to_bone_keep_world(obj, armature, head_bone)
@@ -198,33 +191,44 @@ def add_eyebrows(eye_x, eye_z, eye_surface_y, armature, head_bone, hair_mat):
     brows = []
     for sx in (-1, 1):
         cx = eye_x * sx
-        inner = 0.012 * sx
-        outer = 0.029 * sx
-        y = eye_surface_y - 0.004
+        y = eye_surface_y - 0.0028
         pts = [
-            (cx - inner, y, eye_z + 0.027),
-            (cx, y - 0.001, eye_z + 0.030),
-            (cx + outer * 0.55, y, eye_z + 0.028),
-            (cx + outer, y + 0.001, eye_z + 0.024),
+            (cx - 0.020 * sx, y + 0.0005, eye_z + 0.024),
+            (cx - 0.006 * sx, y - 0.0004, eye_z + 0.029),
+            (cx + 0.010 * sx, y, eye_z + 0.028),
+            (cx + 0.025 * sx, y + 0.0010, eye_z + 0.023),
         ]
-        obj = add_poly_curve(f"Brow_{'L' if sx > 0 else 'R'}", pts, hair_mat, 0.0019)
+        obj = add_poly_curve(f"Brow_{'L' if sx > 0 else 'R'}", pts, hair_mat, 0.00145)
         parent_to_bone_keep_world(obj, armature, head_bone)
         brows.append(obj)
     return brows
 
 
-def add_hair_cap(meshes, bmax, extent, armature, head_bone, hair_mat):
-    head_pts = []
-    cutoff = bmax.z - extent.z * 0.18
+def anatomical_head_bounds(meshes, body_center, bmax, extent):
+    # Restrict to the central upper skull so shoulders/raised arms cannot inflate hair width.
+    z_floor = bmax.z - extent.z * 0.145
+    x_limit = extent.z * 0.085
+    pts = []
     for obj in meshes:
-        head_pts.extend([p for p in world_vertices(obj) if p.z >= cutoff])
-    if not head_pts:
-        raise RuntimeError("Could not estimate head bounds")
-    min_x, max_x = min(p.x for p in head_pts), max(p.x for p in head_pts)
-    min_y, max_y = min(p.y for p in head_pts), max(p.y for p in head_pts)
-    min_z, max_z = min(p.z for p in head_pts), max(p.z for p in head_pts)
-    center = Vector(((min_x + max_x) / 2, (min_y + max_y) / 2 + 0.010, (min_z + max_z) / 2 + 0.025))
-    radii = Vector(((max_x - min_x) * 0.54, (max_y - min_y) * 0.56, (max_z - min_z) * 0.62))
+        for p in world_vertices(obj):
+            if p.z >= z_floor and abs(p.x - body_center.x) <= x_limit:
+                pts.append(p)
+    if len(pts) < 100:
+        raise RuntimeError(f"Insufficient anatomical head samples: {len(pts)}")
+    return (
+        Vector((min(p.x for p in pts), min(p.y for p in pts), min(p.z for p in pts))),
+        Vector((max(p.x for p in pts), max(p.y for p in pts), max(p.z for p in pts))),
+    )
+
+
+def add_hair_cap(meshes, body_center, bmax, extent, armature, head_bone, hair_mat):
+    hmin, hmax = anatomical_head_bounds(meshes, body_center, bmax, extent)
+    hcenter = (hmin + hmax) * 0.5
+    hsize = hmax - hmin
+
+    # Slightly enlarge the actual skull rather than deriving width from the upper torso.
+    center = Vector((hcenter.x, hcenter.y + hsize.y * 0.03, hcenter.z + hsize.z * 0.10))
+    radii = Vector((hsize.x * 0.54, hsize.y * 0.55, hsize.z * 0.61))
 
     bpy.ops.mesh.primitive_uv_sphere_add(segments=72, ring_count=36, location=center)
     cap = bpy.context.object
@@ -233,34 +237,38 @@ def add_hair_cap(meshes, bmax, extent, armature, head_bone, hair_mat):
     bpy.ops.object.transform_apply(location=False, rotation=False, scale=True)
 
     mesh = cap.data
-    for poly in mesh.polygons:
-        poly.select = False
     bpy.context.view_layer.objects.active = cap
     cap.select_set(True)
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.select_all(action="DESELECT")
     bpy.ops.object.mode_set(mode="OBJECT")
-    world_cut = bmax.z - extent.z * 0.095
+
+    # Back/sides may extend lower; the front hairline stays well above the eyes.
+    lower_back = bmax.z - extent.z * 0.105
+    front_hairline = bmax.z - extent.z * 0.050
+    front_split_y = hcenter.y - hsize.y * 0.10
     for v in mesh.vertices:
         wp = cap.matrix_world @ v.co
-        if wp.z < world_cut:
+        remove = wp.z < lower_back
+        if wp.y < front_split_y and wp.z < front_hairline:
+            remove = True
+        if remove:
             v.select = True
-        if wp.y < min_y - 0.006 and wp.z < bmax.z - extent.z * 0.038:
-            v.select = True
+
     bpy.ops.object.mode_set(mode="EDIT")
     bpy.ops.mesh.delete(type="VERT")
     bpy.ops.object.mode_set(mode="OBJECT")
 
     solid = cap.modifiers.new("HairThickness", "SOLIDIFY")
-    solid.thickness = 0.0035
-    solid.offset = 0.1
+    solid.thickness = 0.0028
+    solid.offset = 0.0
     bevel = cap.modifiers.new("HairSoftEdge", "BEVEL")
-    bevel.width = 0.0015
+    bevel.width = 0.0010
     bevel.segments = 2
     cap.data.materials.append(hair_mat)
     bpy.ops.object.shade_smooth()
     parent_to_bone_keep_world(cap, armature, head_bone)
-    return cap
+    return cap, hmin, hmax
 
 
 def setup_render_scene(center, extent):
@@ -279,7 +287,7 @@ def setup_render_scene(center, extent):
         scene.view_settings.look = "AgX - Medium High Contrast"
     except Exception:
         pass
-    scene.world.color = (0.012, 0.015, 0.022)
+    scene.world.color = (0.010, 0.012, 0.018)
 
     camera_data = bpy.data.cameras.new("CinematicCamera")
     camera = bpy.data.objects.new("CinematicCamera", camera_data)
@@ -297,15 +305,13 @@ def setup_render_scene(center, extent):
         obj = bpy.data.objects.new(name, data)
         scene.collection.objects.link(obj)
         obj.location = loc
-        direction = center - obj.location
-        obj.rotation_euler = direction.to_track_quat("-Z", "Y").to_euler()
+        obj.rotation_euler = (center - obj.location).to_track_quat("-Z", "Y").to_euler()
         return obj
 
-    area("Key", center + Vector((-2.4, -3.2, 2.2)), 1050, 2.3, (1.0, 0.78, 0.64))
-    area("Fill", center + Vector((2.3, -2.2, 1.2)), 520, 2.0, (0.58, 0.72, 1.0))
-    area("Rim", center + Vector((1.4, 2.7, 2.5)), 930, 1.7, (0.72, 0.82, 1.0))
-    area("TopSoft", center + Vector((0.0, 0.2, 3.8)), 420, 2.7, (1.0, 0.93, 0.86))
-
+    area("Key", center + Vector((-2.4, -3.2, 2.2)), 940, 2.3, (1.0, 0.80, 0.68))
+    area("Fill", center + Vector((2.3, -2.2, 1.2)), 430, 2.0, (0.60, 0.74, 1.0))
+    area("Rim", center + Vector((1.4, 2.7, 2.5)), 820, 1.7, (0.74, 0.84, 1.0))
+    area("TopSoft", center + Vector((0.0, 0.2, 3.8)), 330, 2.7, (1.0, 0.94, 0.88))
     return camera
 
 
@@ -361,11 +367,11 @@ def main():
 
     mats = {
         "skin": make_skin_material(),
-        "sclera": make_simple_material("Sclera", (0.72, 0.75, 0.72), 0.18),
-        "iris": make_simple_material("IrisBrown", (0.075, 0.028, 0.012), 0.28),
-        "pupil": make_simple_material("Pupil", (0.004, 0.004, 0.004), 0.08),
-        "catchlight": make_simple_material("Catchlight", (0.95, 0.95, 0.95), 0.05),
-        "hair": make_simple_material("HairDarkBrown", (0.018, 0.007, 0.004), 0.36),
+        "sclera": make_simple_material("Sclera", (0.76, 0.77, 0.73), 0.20),
+        "iris": make_simple_material("IrisBrown", (0.060, 0.021, 0.008), 0.30),
+        "pupil": make_simple_material("Pupil", (0.003, 0.003, 0.003), 0.08),
+        "catchlight": make_simple_material("Catchlight", (0.96, 0.96, 0.96), 0.04),
+        "hair": make_simple_material("HairDarkBrown", (0.014, 0.006, 0.003), 0.42),
     }
     assign_material(meshes, mats["skin"])
 
@@ -374,7 +380,7 @@ def main():
     left_parts, left_surface_y = add_eye(meshes, eye_x, eye_z, armature, head_bone, mats)
     right_parts, right_surface_y = add_eye(meshes, -eye_x, eye_z, armature, head_bone, mats)
     brows = add_eyebrows(eye_x, eye_z, min(left_surface_y, right_surface_y), armature, head_bone, mats["hair"])
-    hair = add_hair_cap(meshes, bmax, extent, armature, head_bone, mats["hair"])
+    hair, head_min, head_max = add_hair_cap(meshes, center, bmax, extent, armature, head_bone, mats["hair"])
 
     camera = setup_render_scene(center, extent)
     full_views = render_ring(camera, center, extent, "view", center.z + extent.z * 0.03, 2.85, [0, 45, 90, 135, 180, 225, 270, 315])
@@ -392,7 +398,7 @@ def main():
     metrics = {
         "model": "Meta Momentum Human Rig (MHR)",
         "source_version": "v1.0.1",
-        "prototype": "cinematic_appearance_v1",
+        "prototype": "cinematic_appearance_v2",
         "source_asset": "assets/lod1.fbx",
         "source_license_file": "assets/LICENSE.txt",
         "mesh_object_count_source": len(meshes),
@@ -402,6 +408,8 @@ def main():
         "head_bone": head_bone,
         "eye_center_x": eye_x,
         "eye_center_z": eye_z,
+        "estimated_head_bounds_min": list(head_min),
+        "estimated_head_bounds_max": list(head_max),
         "added_objects": [o.name for o in left_parts + right_parts + brows + [hair]],
         "materials": [m.name for m in mats.values()],
         "full_body_views": full_views,
@@ -412,16 +420,16 @@ def main():
         "formal_final_character": False,
         "limitations": [
             "No identity/reference face fitting was performed because no target identity image was provided.",
-            "Hair is a procedural short-hair cap prototype, not production groom strands/cards.",
+            "Hair is a constrained procedural scalp-cap prototype, not production groom strands/cards.",
             "Procedural skin microdetail is Blender-render evidence; glTF export keeps portable PBR values but cannot preserve all Blender procedural nodes.",
-            "Added eye/hair/brow objects are parented to the head bone when a head bone is discoverable; full deformation/animation acceptance remains a later gate.",
+            "Added eye/hair/brow objects are parented to the head bone; full deformation/animation acceptance remains a later gate.",
         ],
     }
     (OUT / "appearance_metrics.json").write_text(json.dumps(metrics, indent=2), encoding="utf-8")
     (OUT / "README.txt").write_text(
-        "MHR v1.0.1 Cinematic Appearance Prototype Gate\n"
-        "Purpose: prove that the traced MHR carrier can advance beyond neutral gray without changing the approved runtime architecture.\n"
-        "This is an appearance prototype, not the final cinematic character identity or production groom.\n",
+        "MHR v1.0.1 Cinematic Appearance Prototype Gate v2\n"
+        "Purpose: validate a traced MHR carrier with corrected anatomical hair bounds, eyes, brows and procedural skin.\n"
+        "This remains an appearance prototype, not the final cinematic identity or production groom.\n",
         encoding="utf-8",
     )
     print(json.dumps(metrics, indent=2))
