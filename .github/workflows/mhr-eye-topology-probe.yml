@@ -7,12 +7,13 @@ on:
     paths:
       - .github/workflows/mhr-eye-topology-probe.yml
       - tools/experiments/mhr_eye_topology_probe.py
+      - tools/experiments/mhr_eye_patch_mask_probe.py
   workflow_dispatch:
 
 jobs:
   probe-eye-topology:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 18
     steps:
       - uses: actions/checkout@v4
       - name: Download verified official MHR v1.0.1 assets
@@ -31,6 +32,14 @@ jobs:
         run: |
           blender --background --python tools/experiments/mhr_eye_topology_probe.py
           test -s artifacts/mhr-eye-topology-probe/mhr_eye_topology_probe.json
+      - name: Render geometric eye patch masks
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+        run: |
+          blender --background --python tools/experiments/mhr_eye_patch_mask_probe.py
+          test -s artifacts/mhr-eye-topology-probe/mhr_eye_patch_mask_probe.json
+          test -s artifacts/mhr-eye-topology-probe/eye_mask_strict_front.png
+          test -s artifacts/mhr-eye-topology-probe/eye_mask_broad_front.png
       - uses: actions/upload-artifact@v4
         with:
           name: mhr-eye-topology-probe
