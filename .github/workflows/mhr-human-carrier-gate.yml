@@ -28,14 +28,17 @@ jobs:
           test -f assets/lod1.fbx
           test -f assets/LICENSE.txt
 
-      - name: Install Blender and FBX importer dependency
+      - name: Install Blender headless runtime and FBX importer dependency
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y blender python3-numpy
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2
           blender --version
           python3 -c "import numpy; print(numpy.__version__)"
+          ldconfig -p | grep 'libEGL.so.1'
 
       - name: Execute MHR official FBX Human Carrier gate
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
         run: |
           blender --background --python tools/experiments/mhr_fbx_gate_blender.py
           test -s artifacts/mhr-human-carrier-gate/gate_metrics.json
