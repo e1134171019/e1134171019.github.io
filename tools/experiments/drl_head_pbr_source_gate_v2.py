@@ -66,12 +66,13 @@ pts=np.asarray([(o.matrix_world@v.co)[:] for o in meshes for v in o.data.vertice
 hp=np.asarray([(head.matrix_world@v.co)[:] for v in head.data.vertices],dtype=np.float64); hmin,hmax=hp.min(0),hp.max(0); hcenter=(hmin+hmax)/2; hext=hmax-hmin; hscale=float(max(hext))
 if not (0.25 <= hscale <= 0.50): raise RuntimeError(f'normalized DRL head scale implausible: {hscale} m')
 
-scene=bpy.context.scene; scene.render.engine='BLENDER_EEVEE'; scene.render.resolution_x=920; scene.render.resolution_y=920; scene.render.resolution_percentage=100; scene.render.image_settings.file_format='PNG'; scene.world.color=(0.025,0.028,0.034); scene.view_settings.exposure=0.45
+scene=bpy.context.scene; scene.render.engine='BLENDER_EEVEE'; scene.render.resolution_x=920; scene.render.resolution_y=920; scene.render.resolution_percentage=100; scene.render.image_settings.file_format='PNG'; scene.world.color=(0.018,0.020,0.024); scene.view_settings.exposure=-0.40
 
 def area(name,direction,energy,size,color):
     ld=bpy.data.lights.new(name,type='AREA'); ld.energy=energy; ld.shape='DISK'; ld.size=size; ld.color=color
     ob=bpy.data.objects.new(name,ld); bpy.context.collection.objects.link(ob); ob.location=Vector(hcenter)+Vector(direction).normalized()*hscale*1.65; ob.rotation_euler=(Vector(hcenter)-ob.location).to_track_quat('-Z','Y').to_euler(); return ob
-area('Key',(1.2,-1.45,0.8),780,hscale*0.72,(1.0,0.82,0.72)); area('Fill',(-1.15,-0.8,0.25),210,hscale*0.90,(0.70,0.80,1.0)); area('Rim',(0.25,1.25,0.8),430,hscale*0.58,(0.78,0.88,1.0))
+# v2 review was >70% clipped in most foreground views. Reduce incident energy by ~6x while preserving the same studio geometry.
+area('Key',(1.2,-1.45,0.8),120,hscale*0.72,(1.0,0.82,0.72)); area('Fill',(-1.15,-0.8,0.25),35,hscale*0.90,(0.70,0.80,1.0)); area('Rim',(0.25,1.25,0.8),70,hscale*0.58,(0.78,0.88,1.0))
 camd=bpy.data.cameras.new('DRLSourceCamera_v2'); cam=bpy.data.objects.new('DRLSourceCamera_v2',camd); bpy.context.collection.objects.link(cam); scene.camera=cam; cam.data.type='ORTHO'
 
 def render(name,axis,ortho=1.14):
@@ -81,5 +82,5 @@ views={'neg_y':(0,-1,0),'pos_y':(0,1,0),'pos_x':(1,0,0),'neg_x':(-1,0,0),'pos_z'
 for tag,axis in views.items(): render('source_'+tag+'.png',axis,1.16)
 for i,axis in enumerate([(0.66,-1,0),(0.66,1,0),(-0.66,-1,0),(-0.66,1,0)]): render(f'diagonal_{i}.png',axis,0.88)
 
-metrics={'source':'Digital Reality Lab Head PBR Scan Sample / Marcus','source_to_meters':SOURCE_TO_METERS,'mesh_objects':[{'name':o.name,'vertices':len(o.data.vertices),'polygons':len(o.data.polygons),'uv_layers':[u.name for u in o.data.uv_layers]} for o in meshes],'head_object':head.name,'head_bbox_m':{'min':hmin.tolist(),'max':hmax.tolist(),'extent':hext.tolist()},'render_maps':{'diffuse':{'size':list(diff_img.size)},'normal':{'size':list(norm_img.size)},'glossiness':{'size':list(gloss_img.size)},'specular':{'size':list(spec_img.size)}},'rendered_source_stack':['diffuse','normal','glossiness','specular'],'confirmed_archive_map_not_rendered':['Marcus_38_Displace.exr'],'redistribution_policy':'No original DRL mesh or source textures are copied into the workflow artifact.','gate_claim':'Exposure-corrected real DRL source PBR visual quality gate before GNM transfer.','not_claimed':['GNM texture transfer','final cinematic master adoption','browser runtime parity']}
+metrics={'source':'Digital Reality Lab Head PBR Scan Sample / Marcus','source_to_meters':SOURCE_TO_METERS,'mesh_objects':[{'name':o.name,'vertices':len(o.data.vertices),'polygons':len(o.data.polygons),'uv_layers':[u.name for u in o.data.uv_layers]} for o in meshes],'head_object':head.name,'head_bbox_m':{'min':hmin.tolist(),'max':hmax.tolist(),'extent':hext.tolist()},'render_maps':{'diffuse':{'size':list(diff_img.size)},'normal':{'size':list(norm_img.size)},'glossiness':{'size':list(gloss_img.size)},'specular':{'size':list(spec_img.size)}},'rendered_source_stack':['diffuse','normal','glossiness','specular'],'confirmed_archive_map_not_rendered':['Marcus_38_Displace.exr'],'lookdev':{'exposure':scene.view_settings.exposure,'key_w':120,'fill_w':35,'rim_w':70},'redistribution_policy':'No original DRL mesh or source textures are copied into the workflow artifact.','gate_claim':'Exposure-corrected real DRL source PBR visual quality gate before GNM transfer.','not_claimed':['GNM texture transfer','final cinematic master adoption','browser runtime parity']}
 (OUT/'drl_head_pbr_source_metrics.json').write_text(json.dumps(metrics,indent=2),encoding='utf-8'); print(json.dumps(metrics,indent=2))
