@@ -1,0 +1,86 @@
+name: GNM Eye Overlap Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-head-eye-gate
+    paths:
+      - tools/experiments/gnm_eye_overlap_gate.py
+      - .github/workflows/gnm-eye-overlap-gate.yml
+  workflow_dispatch:
+
+jobs:
+  gnm-eye-overlap-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire verified pinned GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Install Blender runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2 python3-pil
+
+      - name: Execute overlapping eye-mask gate
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+        run: |
+          blender --background --python tools/experiments/gnm_eye_overlap_gate.py
+          test -s artifacts/gnm-eye-overlap-gate/gnm_eye_overlap_metrics.json
+          test -s artifacts/gnm-eye-overlap-gate/gnm_v3_eye_overlap_diagnostic.glb
+          for f in \
+            eye_interior_front.png \
+            eye_interior_three_quarter.png \
+            eye_interior_side.png \
+            cornea_shell_front.png \
+            cornea_shell_three_quarter.png \
+            head_with_eye_anatomy_front.png \
+            head_with_eye_anatomy_three_quarter.png \
+            head_with_eye_anatomy_side.png; do
+            test -s "artifacts/gnm-eye-overlap-gate/$f"
+          done
+
+      - name: Build review sheet and provenance
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          import json, shutil
+          out=Path('artifacts/gnm-eye-overlap-gate')
+          files=[
+            'head_with_eye_anatomy_front.png','head_with_eye_anatomy_three_quarter.png','head_with_eye_anatomy_side.png',
+            'eye_interior_front.png','eye_interior_three_quarter.png','eye_interior_side.png',
+            'cornea_shell_front.png','cornea_shell_three_quarter.png'
+          ]
+          sheet=Image.new('RGB',(420*4,455*2),'white')
+          for i,name in enumerate(files):
+              im=Image.open(out/name).convert('RGB').resize((420,420))
+              tile=Image.new('RGB',(420,455),'white'); tile.paste(im,(0,35))
+              ImageDraw.Draw(tile).text((10,10),name.replace('.png',''),fill='black')
+              sheet.paste(tile,((i%4)*420,(i//4)*455))
+          sheet.save(out/'00_gnm_eye_overlap_contact_sheet.jpg',quality=94)
+          shutil.copy('/tmp/GNM/LICENSE',out/'GNM_LICENSE_APACHE_2_0.txt')
+          (out/'provenance.json').write_text(json.dumps({
+              'repository':'google/GNM',
+              'commit':'98450b3c943101d5859ac1ceb7331ec918ebc321',
+              'npz_sha256':'868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055',
+              'classification':'nested/overlapping eye masks with pupil > iris > sclera priority'
+          },indent=2),encoding='utf-8')
+          PY
+          test -s artifacts/gnm-eye-overlap-gate/00_gnm_eye_overlap_contact_sheet.jpg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gnm-eye-overlap-gate
+          path: artifacts/gnm-eye-overlap-gate/
+          if-no-files-found: error
+          retention-days: 14
