@@ -1,0 +1,97 @@
+name: GNM MHR Joint Fit Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-head-eye-gate
+    paths:
+      - tools/experiments/gnm_mhr_joint_fit_gate.py
+      - .github/workflows/gnm-mhr-joint-fit-gate.yml
+  workflow_dispatch:
+
+jobs:
+  joint-fit-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire verified official MHR v1.0.1 carrier
+        run: |
+          curl -L --fail --retry 3 -o /tmp/mhr-assets-v1.0.1.zip https://github.com/facebookresearch/MHR/releases/download/v1.0.1/assets.zip
+          echo "e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94  /tmp/mhr-assets-v1.0.1.zip" | sha256sum -c -
+          unzip -q /tmp/mhr-assets-v1.0.1.zip -d .
+          test -s assets/lod1.fbx
+          test -s assets/LICENSE.txt
+
+      - name: Install Blender integration runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2 python3-pil
+
+      - name: Execute four-joint similarity fit and render integration gate
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          MHR_FBX: assets/lod1.fbx
+        run: |
+          blender --background --python tools/experiments/gnm_mhr_joint_fit_gate.py
+          test -s artifacts/gnm-mhr-joint-fit-gate/gnm_mhr_joint_fit_metrics.json
+          test -s artifacts/gnm-mhr-joint-fit-gate/gnm_head_on_mhr_body_diagnostic.glb
+          for f in \
+            integrated_body_front.png \
+            integrated_body_three_quarter.png \
+            integrated_body_side.png \
+            neck_seam_front.png \
+            neck_seam_three_quarter.png \
+            neck_seam_side.png \
+            native_head_overlay_front.png \
+            native_head_overlay_three_quarter.png \
+            native_head_overlay_side.png; do
+            test -s "artifacts/gnm-mhr-joint-fit-gate/$f"
+          done
+
+      - name: Build GPT review sheet and preserve provenance
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageDraw
+          import json, shutil
+          out=Path('artifacts/gnm-mhr-joint-fit-gate')
+          files=[
+            'integrated_body_front.png','integrated_body_three_quarter.png','integrated_body_side.png',
+            'neck_seam_front.png','neck_seam_three_quarter.png','neck_seam_side.png',
+            'native_head_overlay_front.png','native_head_overlay_three_quarter.png','native_head_overlay_side.png'
+          ]
+          w,h=380,380
+          sheet=Image.new('RGB',(w*3,(h+34)*3),'white')
+          for i,name in enumerate(files):
+              im=Image.open(out/name).convert('RGB').resize((w,h))
+              tile=Image.new('RGB',(w,h+34),'white'); tile.paste(im,(0,34))
+              ImageDraw.Draw(tile).text((8,9),name.replace('.png',''),fill='black')
+              sheet.paste(tile,((i%3)*w,(i//3)*(h+34)))
+          sheet.save(out/'00_gnm_mhr_joint_fit_contact_sheet.jpg',quality=94)
+          shutil.copy('/tmp/GNM/LICENSE',out/'GNM_LICENSE_APACHE_2_0.txt')
+          shutil.copy('assets/LICENSE.txt',out/'MHR_LICENSE_APACHE_2_0.txt')
+          (out/'provenance.json').write_text(json.dumps({
+            'GNM':{'commit':'98450b3c943101d5859ac1ceb7331ec918ebc321','sha256':'868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055'},
+            'MHR':{'version':'v1.0.1','assets_zip_sha256':'e4f4f205cd87c0fa106577ba1de4fc763e4eb197c924461d2ef7e6944e9d6b94'},
+            'gate':'four-joint rest-pose similarity fit: neck/head/left_eye/right_eye; no production merge'
+          },indent=2),encoding='utf-8')
+          PY
+          test -s artifacts/gnm-mhr-joint-fit-gate/00_gnm_mhr_joint_fit_contact_sheet.jpg
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gnm-mhr-joint-fit-gate
+          path: artifacts/gnm-mhr-joint-fit-gate/
+          if-no-files-found: error
+          retention-days: 14
