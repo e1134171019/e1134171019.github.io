@@ -1,0 +1,47 @@
+name: Anny Human Carrier Gate
+
+on:
+  push:
+    branches:
+      - experiment/anny-v0.6-human-carrier-gate
+    paths:
+      - .github/workflows/anny-human-carrier-gate.yml
+      - tools/experiments/anny_human_gate.py
+  workflow_dispatch:
+
+jobs:
+  build-human-carrier-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout experiment branch
+        uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+
+      - name: Install Anny v0.6 and gate dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install "anny @ git+https://github.com/naver/anny.git@v0.6.0" matplotlib trimesh
+
+      - name: Execute Human Carrier gate
+        run: |
+          python tools/experiments/anny_human_gate.py
+
+      - name: Show generated artifacts
+        run: |
+          find artifacts/anny-human-carrier-gate -maxdepth 1 -type f -printf '%f %s bytes\n' | sort
+          sha256sum artifacts/anny-human-carrier-gate/* | tee artifacts/anny-human-carrier-gate/SHA256SUMS.txt
+
+      - name: Upload Human Carrier gate artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anny-v0.6-human-carrier-gate
+          path: artifacts/anny-human-carrier-gate/
+          if-no-files-found: error
+          retention-days: 14
