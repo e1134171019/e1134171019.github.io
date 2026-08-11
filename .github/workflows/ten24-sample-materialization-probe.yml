@@ -1,0 +1,75 @@
+name: Ten24 Sample Materialization Probe
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - .github/workflows/ten24-sample-materialization-probe.yml
+  workflow_dispatch:
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch official Ten24 sample page and extract download routes
+        run: |
+          mkdir -p artifacts/ten24-sample-probe
+          UA='Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/128 Safari/537.36'
+          curl -L --fail --retry 3 -A "$UA" -o artifacts/ten24-sample-probe/page.html https://ten24.info/sample-scan/
+          python3 - <<'PY'
+          from pathlib import Path
+          from html import unescape
+          from urllib.parse import urljoin
+          import json,re
+          text=unescape(Path('artifacts/ten24-sample-probe/page.html').read_text(errors='ignore')).replace('\\/','/')
+          urls=[]
+          for m in re.finditer(r'''(?:href|src|data-url|data-href|data-download|onclick)\s*=\s*["']([^"']+)["']''',text,re.I):
+              val=m.group(1)
+              # Pull URL out of JS onclick if present.
+              mm=re.search(r'https?://[^\s"\']+',val)
+              if mm: val=mm.group(0)
+              urls.append(urljoin('https://ten24.info/sample-scan/',val))
+          for m in re.finditer(r'https?://[^"\'<>\s]+',text,re.I): urls.append(m.group(0))
+          uniq=[]
+          for u in urls:
+              if u not in uniq: uniq.append(u)
+          hosts=('dropbox','drive.google','docs.google','amazonaws','cloudfront','mega.nz','box.com','mediafire','wetransfer','ten24.info','3dscanstore')
+          keys=('download','.zip','.rar','.7z','.obj','sample','package','scan')
+          cand=[u for u in uniq if any(h in u.lower() for h in hosts) and any(k in u.lower() for k in keys)]
+          Path('artifacts/ten24-sample-probe/candidates.json').write_text(json.dumps({'all':len(uniq),'candidates':cand},indent=2))
+          print(json.dumps({'all':len(uniq),'candidates':cand},indent=2))
+          PY
+      - name: Probe extracted routes concurrently
+        run: |
+          python3 - <<'PY'
+          import concurrent.futures,json,re,subprocess
+          from pathlib import Path
+          cand=json.loads(Path('artifacts/ten24-sample-probe/candidates.json').read_text())['candidates']
+          def probe(u):
+              p=subprocess.run(['curl','-L','-sS','-A','Mozilla/5.0','--max-time','15','--range','0-0','-D','-','-o','/dev/null',u],text=True,capture_output=True)
+              blocks=[b for b in p.stdout.replace('\r','').split('\n\n') if b.strip()]
+              h=blocks[-1] if blocks else p.stdout
+              return {'url':u,'exit':p.returncode,'headers':h[-4000:]}
+          with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+              rows=list(ex.map(probe,cand[:50]))
+          viable=[]
+          for r in rows:
+              h=r['headers'].lower(); score=0
+              if r['exit']!=0: continue
+              if 'content-disposition:' in h and 'attachment' in h: score+=5
+              if any(x in h for x in ['application/zip','application/octet-stream','application/x-rar','application/x-7z']): score+=4
+              if any(x in r['url'].lower() for x in ['dropbox','drive.google','amazonaws','cloudfront','.zip','.rar','.7z']): score+=2
+              if score: viable.append({'score':score,**r})
+          viable.sort(key=lambda x:-x['score'])
+          Path('artifacts/ten24-sample-probe/probe-results.json').write_text(json.dumps(rows,indent=2))
+          Path('artifacts/ten24-sample-probe/materialization-route.json').write_text(json.dumps({'status':'PASS_ROUTE_FOUND' if viable else 'BLOCKED_NO_BINARY_ROUTE','viable':viable},indent=2))
+          print(json.dumps({'status':'PASS_ROUTE_FOUND' if viable else 'BLOCKED_NO_BINARY_ROUTE','viable':viable},indent=2))
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ten24-sample-materialization-probe
+          path: artifacts/ten24-sample-probe/
+          retention-days: 14
