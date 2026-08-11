@@ -19,6 +19,8 @@ SOURCE_TO_METERS=0.01
 for o in meshes:
     o.scale=(SOURCE_TO_METERS,)*3
     for p in o.data.polygons: p.use_smooth=True
+# Blender object transforms are lazily evaluated. Refresh before any matrix_world-based physical-scale gate.
+bpy.context.view_layer.update()
 head=max(meshes,key=lambda o:len(o.data.polygons)); head.name='DRL_Marcus_Head_Source_v2'
 
 def img_node(nt,tex,path,name,loc,noncolor=False):
