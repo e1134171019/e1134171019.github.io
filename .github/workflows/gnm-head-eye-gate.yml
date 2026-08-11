@@ -1,0 +1,84 @@
+name: GNM Head Eye Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-head-eye-gate
+    paths:
+      - tools/experiments/gnm_head_eye_gate.py
+      - .github/workflows/gnm-head-eye-gate.yml
+  workflow_dispatch:
+
+jobs:
+  gnm-head-eye-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned official Google GNM source
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          test -s gnm/shape/data/versions/v3_0/gnm_head.npz
+          test -s LICENSE
+          sha256sum gnm/shape/data/versions/v3_0/gnm_head.npz | tee /tmp/gnm_head_npz.sha256
+
+      - name: Install Blender diagnostic runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2 python3-pil
+
+      - name: Materialize and render official GNM neutral head
+        env:
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+        run: |
+          blender --background --python tools/experiments/gnm_head_eye_gate.py
+          test -s artifacts/gnm-head-eye-gate/gnm_head_gate_metrics.json
+          test -s artifacts/gnm-head-eye-gate/gnm_v3_neutral_diagnostic.glb
+          for v in pos_x neg_x pos_y neg_y pos_z neg_z; do
+            test -s "artifacts/gnm-head-eye-gate/gnm_neutral_${v}.png"
+            test -s "artifacts/gnm-head-eye-gate/gnm_eyes_${v}.png"
+          done
+
+      - name: Build visual contact sheets and preserve provenance
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image, ImageOps, ImageDraw
+          import json, shutil
+          out = Path('artifacts/gnm-head-eye-gate')
+          order = ['pos_x','neg_x','pos_y','neg_y','pos_z','neg_z']
+          for prefix, target in [('gnm_neutral','00_gnm_head_six_axis.png'), ('gnm_eyes','01_gnm_eyes_six_axis.png')]:
+              ims=[]
+              for name in order:
+                  im=Image.open(out/f'{prefix}_{name}.png').convert('RGB').resize((410,410))
+                  canvas=Image.new('RGB',(410,445),'white')
+                  canvas.paste(im,(0,35))
+                  d=ImageDraw.Draw(canvas); d.text((12,10),name,fill='black')
+                  ims.append(canvas)
+              sheet=Image.new('RGB',(410*3,445*2),'white')
+              for i,im in enumerate(ims): sheet.paste(im,((i%3)*410,(i//3)*445))
+              sheet.save(out/target,quality=94)
+          shutil.copy('/tmp/GNM/LICENSE', out/'GNM_LICENSE_APACHE_2_0.txt')
+          shutil.copy('/tmp/gnm_head_npz.sha256', out/'gnm_head_npz.sha256')
+          provenance={
+            'repository':'https://github.com/google/GNM',
+            'commit':'98450b3c943101d5859ac1ceb7331ec918ebc321',
+            'model':'gnm/shape/data/versions/v3_0/gnm_head.npz',
+            'purpose':'Cinematic Head + Complete Eye System candidate gate; diagnostic materials only; no MHR modification.'
+          }
+          (out/'provenance.json').write_text(json.dumps(provenance,indent=2),encoding='utf-8')
+          PY
+          test -s artifacts/gnm-head-eye-gate/00_gnm_head_six_axis.png
+          test -s artifacts/gnm-head-eye-gate/01_gnm_eyes_six_axis.png
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gnm-head-eye-gate
+          path: artifacts/gnm-head-eye-gate/
+          if-no-files-found: error
+          retention-days: 14
