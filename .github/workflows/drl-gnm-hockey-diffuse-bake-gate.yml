@@ -1,0 +1,117 @@
+name: DRL GNM Hockey Diffuse Bake Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_hockey_diffuse_bake_gate.py'
+      - '.github/workflows/drl-gnm-hockey-diffuse-bake-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diffuse-bake-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor OBJ and diffuse privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-hockey-diffuse-bake-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-hockey-diffuse-bake-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          for src,dst in {
+              'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+              'Textures/Marcus_38_diffuse.png':'Marcus_38_diffuse.png',
+          }.items():
+              info=z.getinfo(src); data=z.read(info); Path('/tmp/drl',dst).write_bytes(data)
+              print(src,len(data),f'{info.CRC:08x}')
+          PY
+
+      - name: Install CPU bake runtime and build 4K diffuse proxy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil imagemagick libegl1 libgl1 libgles2
+          identify /tmp/drl/Marcus_38_diffuse.png | tee artifacts/drl-gnm-hockey-diffuse-bake-gate/original-diffuse-metadata.txt
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_diffuse.png -resize '4096x4096>' /tmp/drl/diffuse_4k.png
+          identify /tmp/drl/diffuse_4k.png | tee artifacts/drl-gnm-hockey-diffuse-bake-gate/proxy-diffuse-metadata.txt
+
+      - name: Execute 2K hockey-mask selected-to-active diffuse bake
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DIFFUSE: /tmp/drl/diffuse_4k.png
+          BAKE_SIZE: '2048'
+        run: |
+          blender --background --python tools/experiments/drl_gnm_hockey_diffuse_bake_gate.py
+          test -s artifacts/drl-gnm-hockey-diffuse-bake-gate/drl_gnm_hockey_diffuse_bake_metrics.json
+
+      - name: Verify diffuse bake numeric contract and renders
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageStat
+          import json
+          out=Path('artifacts/drl-gnm-hockey-diffuse-bake-gate')
+          m=json.loads((out/'drl_gnm_hockey_diffuse_bake_metrics.json').read_text())
+          if not m.get('gate_pass'):
+              raise SystemExit(f"metric gate FAIL: {m['bake']}")
+          if m.get('raw_baked_identity_map_uploaded') is not False:
+              raise SystemExit('raw identity bake redistribution invariant broken')
+          for f in ['hockey_uv_coverage_diagnostic.png','diffuse_transfer_front.png','diffuse_transfer_three_quarter.png','diffuse_transfer_side.png']:
+              im=Image.open(out/f).convert('RGB')
+              st=ImageStat.Stat(im)
+              bg=im.getpixel((2,2))
+              changed=sum(1 for p in im.getdata() if sum(abs(p[i]-bg[i]) for i in range(3))>22)
+              if changed<3500 or max(st.stddev)<7:
+                  raise SystemExit(f'blank/flat diagnostic {f}: changed={changed} std={st.stddev}')
+          PY
+
+      - name: Build GPT review contact sheet
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/drl-gnm-hockey-diffuse-bake-gate')
+          files=['diffuse_transfer_front.png','diffuse_transfer_three_quarter.png','diffuse_transfer_side.png','hockey_uv_coverage_diagnostic.png']
+          existing=[f for f in files if (out/f).is_file()]
+          if not existing: raise SystemExit(0)
+          w=h=420; cols=2; rows=(len(existing)+1)//2
+          sheet=Image.new('RGB',(w*cols,(h+32)*rows),'white')
+          for i,f in enumerate(existing):
+              im=Image.open(out/f).convert('RGB').resize((w,h))
+              x=(i%cols)*w; y=(i//cols)*(h+32)
+              sheet.paste(im,(x,y+32)); ImageDraw.Draw(sheet).text((x+8,y+9),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_drl_gnm_hockey_diffuse_bake_contact_sheet.jpg',quality=95)
+          PY
+
+      - name: Assert no DRL source or raw baked identity map is uploaded
+        if: always()
+        run: |
+          ! find artifacts/drl-gnm-hockey-diffuse-bake-gate -type f \( -iname '*.obj' -o -iname '*.ztl' -o -iname '*.fbx' -o -iname '*diffuse_4k*' -o -iname '*gnm_hockey_drl_diffuse*' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-hockey-diffuse-bake-gate
+          path: artifacts/drl-gnm-hockey-diffuse-bake-gate/
+          retention-days: 14
