@@ -1,0 +1,106 @@
+name: DRL GNM Semantic Coverage Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_semantic_coverage_gate.py'
+      - '.github/workflows/drl-gnm-semantic-coverage-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-coverage:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor geometry privately for diagnostic
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-semantic-coverage-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-semantic-coverage-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          info=z.getinfo('OBJ/Marcus_PBR_Sample_01.obj')
+          data=z.read(info)
+          Path('/tmp/drl/Marcus_PBR_Sample_01.obj').write_bytes(data)
+          print({'bytes':len(data),'crc32':f'{info.CRC:08x}'})
+          PY
+
+      - name: Install CPU diagnostic runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil libegl1 libgl1 libgles2
+
+      - name: Execute semantic coverage localization
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+        run: |
+          blender --background --python tools/experiments/drl_gnm_semantic_coverage_gate.py
+          test -s artifacts/drl-gnm-semantic-coverage-gate/drl_gnm_semantic_coverage_metrics.json
+
+      - name: Verify diagnostic outputs are nonblank and internally consistent
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageStat
+          import json
+          out=Path('artifacts/drl-gnm-semantic-coverage-gate')
+          m=json.loads((out/'drl_gnm_semantic_coverage_metrics.json').read_text())
+          if m['face_roi_target_to_donor']['count'] < 1500:
+              raise SystemExit('diagnostic ROI too small')
+          if not m['gnm_vertex_group_names']:
+              raise SystemExit('missing GNM semantic group inventory')
+          for f in ['coverage_front.png','coverage_three_quarter.png','coverage_side.png']:
+              im=Image.open(out/f).convert('RGB')
+              st=ImageStat.Stat(im)
+              bg=im.getpixel((2,2))
+              changed=sum(1 for p in im.getdata() if sum(abs(p[i]-bg[i]) for i in range(3))>22)
+              if changed < 4000 or max(st.stddev) < 8:
+                  raise SystemExit(f'blank/flat heatmap {f}: changed={changed} std={st.stddev}')
+          PY
+
+      - name: Build GPT review contact sheet
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/drl-gnm-semantic-coverage-gate')
+          files=['coverage_front.png','coverage_three_quarter.png','coverage_side.png']
+          w=h=440
+          sheet=Image.new('RGB',(w*3,h+34),'white')
+          for i,f in enumerate(files):
+              im=Image.open(out/f).convert('RGB').resize((w,h))
+              sheet.paste(im,(i*w,34))
+              ImageDraw.Draw(sheet).text((i*w+8,9),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_drl_gnm_semantic_coverage_contact_sheet.jpg',quality=95)
+          PY
+
+      - name: Assert source geometry was not staged for redistribution
+        run: |
+          ! find artifacts/drl-gnm-semantic-coverage-gate -type f \( -iname '*.obj' -o -iname '*.ztl' -o -iname '*.fbx' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-semantic-coverage-gate
+          path: artifacts/drl-gnm-semantic-coverage-gate/
+          retention-days: 14
