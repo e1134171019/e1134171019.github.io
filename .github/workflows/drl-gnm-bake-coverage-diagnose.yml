@@ -1,0 +1,116 @@
+name: DRL GNM Bake Coverage Diagnose
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_bake_coverage_diagnose.py'
+      - '.github/workflows/drl-gnm-bake-coverage-diagnose.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor OBJ and diffuse privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-bake-coverage-diagnose
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-bake-coverage-diagnose/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          for src,dst in {
+              'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+              'Textures/Marcus_38_diffuse.png':'Marcus_38_diffuse.png',
+          }.items():
+              info=z.getinfo(src); data=z.read(info); Path('/tmp/drl',dst).write_bytes(data)
+              print(src,len(data),f'{info.CRC:08x}')
+          PY
+
+      - name: Install CPU diagnostic runtime and build 4K diffuse proxy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil imagemagick libegl1 libgl1 libgles2
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_diffuse.png -resize '4096x4096>' /tmp/drl/diffuse_4k.png
+
+      - name: Reproduce failed bake and localize coverage contract
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DIFFUSE: /tmp/drl/diffuse_4k.png
+          BAKE_SIZE: '2048'
+        run: |
+          blender --background --python tools/experiments/drl_gnm_bake_coverage_diagnose.py
+          test -s artifacts/drl-gnm-bake-coverage-diagnose/coverage_root_cause_metrics.json
+          test -s artifacts/drl-gnm-bake-coverage-diagnose/expected_uv_mask.png
+          test -s artifacts/drl-gnm-bake-coverage-diagnose/actual_cycles_coverage_mask.png
+
+      - name: Verify diagnosis is explicit
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          p=Path('artifacts/drl-gnm-bake-coverage-diagnose/coverage_root_cause_metrics.json')
+          m=json.loads(p.read_text())
+          allowed={
+              'ACTUAL_CYCLES_COVERAGE_ZERO',
+              'UV_IMAGE_ORIENTATION_MISMATCH',
+              'DIRECT_UV_COVERAGE_PRESENT_CONTRACT_BUG_ELSEWHERE',
+              'CYCLES_COVERAGE_PRESENT_BUT_PROJECTION_OR_UV_FOOTPRINT_MISMATCH',
+          }
+          if m.get('diagnosis') not in allowed:
+              raise SystemExit(f"ambiguous diagnosis: {m.get('diagnosis')}")
+          if m['expected']['pixels'] <= 0:
+              raise SystemExit('expected UV footprint empty')
+          print(json.dumps({
+              'diagnosis':m['diagnosis'],
+              'expected':m['expected'],
+              'actual':m['actual_cycles_coverage'],
+              'overlaps':m['overlap_variants'],
+              'best':m['best_orientation'],
+          },indent=2))
+          PY
+
+      - name: Build safe diagnostic contact sheet
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/drl-gnm-bake-coverage-diagnose')
+          files=['expected_uv_mask.png','actual_cycles_coverage_mask.png','direct_overlap_composite.png','best_orientation_overlap_composite.png']
+          w=h=420; sheet=Image.new('RGB',(w*2,(h+32)*2),'white')
+          for i,f in enumerate(files):
+              im=Image.open(out/f).convert('RGB').resize((w,h))
+              x=(i%2)*w; y=(i//2)*(h+32)
+              sheet.paste(im,(x,y+32)); ImageDraw.Draw(sheet).text((x+8,y+9),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_bake_coverage_root_cause_contact_sheet.jpg',quality=95)
+          PY
+
+      - name: Assert no DRL source or raw identity bake is uploaded
+        run: |
+          ! find artifacts/drl-gnm-bake-coverage-diagnose -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*diffuse*' -o -iname '*gnm_hockey_drl_diffuse*' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drl-gnm-bake-coverage-diagnose
+          path: artifacts/drl-gnm-bake-coverage-diagnose/
+          retention-days: 14
