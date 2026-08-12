@@ -1,0 +1,123 @@
+name: DRL GNM NonRigid Alignment Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_nonrigid_gate.py'
+      - '.github/workflows/drl-gnm-nonrigid-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  nonrigid-gate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor geometry without staging source asset
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-nonrigid-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-nonrigid-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          info=z.getinfo('OBJ/Marcus_PBR_Sample_01.obj')
+          data=z.read(info)
+          Path('/tmp/drl/Marcus_PBR_Sample_01.obj').write_bytes(data)
+          print({'bytes':len(data),'crc32':f'{info.CRC:08x}'})
+          PY
+          test -s /tmp/drl/Marcus_PBR_Sample_01.obj
+
+      - name: Install CPU registration runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil libegl1 libgl1 libgles2
+
+      - name: Execute bounded smooth nonrigid registration
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+        run: |
+          set +e
+          blender --background --python tools/experiments/drl_gnm_nonrigid_gate.py
+          rc=$?
+          echo "$rc" > artifacts/drl-gnm-nonrigid-gate/script-exit-code.txt
+          exit 0
+
+      - name: Verify numeric contract and nonblank overlays
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageStat
+          import json
+          out=Path('artifacts/drl-gnm-nonrigid-gate')
+          m=json.loads((out/'drl_gnm_nonrigid_metrics.json').read_text())
+          if not m.get('numeric_gate_pass'):
+              raise SystemExit('nonrigid metric says FAIL')
+          t=m['gate_thresholds']
+          for direction in ['drl_to_gnm_face','gnm_to_drl_face']:
+              s=m['nonrigid'][direction]
+              if s['median_mm']>t['median_mm_max'] or s['p90_mm']>t['p90_mm_max']:
+                  raise SystemExit(f'{direction} exceeds gate: {s}')
+          d=m['face_deformation']
+          if d['p95_mm']>t['deformation_p95_mm_max'] or d['max_mm']>t['deformation_max_mm_max']:
+              raise SystemExit(f'deformation budget exceeded: {d}')
+          if m['p90_improvement_fraction']<t['minimum_p90_improvement_fraction']:
+              raise SystemExit('insufficient p90 improvement')
+          for f in ['nonrigid_overlay_front.png','nonrigid_overlay_three_quarter.png','nonrigid_face_front.png','nonrigid_face_three_quarter.png']:
+              im=Image.open(out/f).convert('RGB')
+              st=ImageStat.Stat(im)
+              bg=im.getpixel((2,2))
+              changed=sum(1 for p in im.getdata() if sum(abs(p[i]-bg[i]) for i in range(3))>22)
+              if changed<3000 or max(st.stddev)<6:
+                  raise SystemExit(f'blank/flat overlay {f}: changed={changed}')
+          PY
+
+      - name: Build review contact sheet
+        if: always()
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          from PIL import Image,ImageDraw
+          out=Path('artifacts/drl-gnm-nonrigid-gate')
+          files=['nonrigid_overlay_front.png','nonrigid_overlay_three_quarter.png','nonrigid_face_front.png','nonrigid_face_three_quarter.png']
+          existing=[f for f in files if (out/f).is_file()]
+          if not existing: raise SystemExit(0)
+          w=h=430; cols=2; rows=(len(existing)+1)//2
+          sheet=Image.new('RGB',(w*cols,(h+32)*rows),'white')
+          for i,f in enumerate(existing):
+              im=Image.open(out/f).convert('RGB').resize((w,h))
+              x=(i%cols)*w; y=(i//cols)*(h+32)
+              sheet.paste(im,(x,y+32))
+              ImageDraw.Draw(sheet).text((x+8,y+9),f.replace('.png',''),fill='black')
+          sheet.save(out/'00_drl_gnm_nonrigid_contact_sheet.jpg',quality=95)
+          PY
+
+      - name: Assert source geometry was not staged for redistribution
+        if: always()
+        run: |
+          ! find artifacts/drl-gnm-nonrigid-gate -type f \( -iname '*.obj' -o -iname '*.ztl' -o -iname '*.fbx' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-nonrigid-gate
+          path: artifacts/drl-gnm-nonrigid-gate/
+          retention-days: 14
