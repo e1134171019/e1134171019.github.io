@@ -61,7 +61,7 @@ jobs:
           import numpy as np
           from pathlib import Path
 
-          src=cv2.imread('/tmp/drl/displace_4k.png', cv2.IMREAD_UNCHANGED)
+          src=cv2.imread('/tmp/drl/displace_4k.png', cv2.IMREAD_ANYDEPTH | cv2.IMREAD_GRAYSCALE)
           if src is None or src.ndim != 2 or src.dtype != np.uint16 or min(src.shape) < 2048:
               raise SystemExit(f'unexpected source proxy: {None if src is None else (src.shape,src.dtype)}')
           f=src.astype(np.float32)
