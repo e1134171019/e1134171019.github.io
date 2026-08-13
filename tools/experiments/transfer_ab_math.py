@@ -85,3 +85,21 @@ def sample_image_bilinear(image, uv):
     x0=np.floor(u).astype(int); y0=np.floor(v).astype(int); x1=np.minimum(x0+1,w-1); y1=np.minimum(y0+1,h-1); fx=(u-x0)[:,None]; fy=(v-y0)[:,None]
     c00=img[y0,x0,:3].astype(float); c10=img[y0,x1,:3].astype(float); c01=img[y1,x0,:3].astype(float); c11=img[y1,x1,:3].astype(float)
     return (c00*(1-fx)+c10*fx)*(1-fy)+(c01*(1-fx)+c11*fx)*fy
+
+
+def micro_height_from_lowpass(source, lowpass, percentile=99.5):
+    src=np.asarray(source,dtype=np.float64); low=np.asarray(lowpass,dtype=np.float64)
+    if src.shape!=low.shape or src.ndim!=2: raise ValueError("source and lowpass must be same-shape 2D arrays")
+    if not (0.0 < float(percentile) <= 100.0): raise ValueError("percentile must be in (0,100]")
+    residual=src-low
+    finite=np.isfinite(residual)
+    out=np.zeros(src.shape,dtype=np.float32)
+    if not np.any(finite):
+        return out, {'scale':0.0,'median':0.0,'percentile':float(percentile),'finite_fraction':0.0}
+    center=float(np.median(residual[finite]))
+    centered=residual-center
+    scale=float(np.percentile(np.abs(centered[finite]),float(percentile)))
+    if scale<=1e-15:
+        return out, {'scale':0.0,'median':center,'percentile':float(percentile),'finite_fraction':float(np.mean(finite))}
+    out[finite]=np.clip(centered[finite]/scale,-1.0,1.0).astype(np.float32)
+    return out, {'scale':scale,'median':center,'percentile':float(percentile),'finite_fraction':float(np.mean(finite))}
