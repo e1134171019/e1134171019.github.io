@@ -1,0 +1,95 @@
+name: DRL GNM Ray Geometry Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_ray_geometry_gate.py'
+      - 'tools/experiments/ray_geometry_math.py'
+      - '.github/workflows/drl-gnm-ray-geometry-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor OBJ privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-ray-geometry-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-ray-geometry-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          src='OBJ/Marcus_PBR_Sample_01.obj'
+          info=z.getinfo(src)
+          data=z.read(info)
+          Path('/tmp/drl/Marcus_PBR_Sample_01.obj').write_bytes(data)
+          print(src,len(data),f'{info.CRC:08x}')
+          PY
+
+      - name: Install CPU geometry runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy libegl1 libgl1 libgles2
+
+      - name: Execute signed ray geometry diagnostic
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+        run: |
+          blender --background --python tools/experiments/drl_gnm_ray_geometry_gate.py
+          test -s artifacts/drl-gnm-ray-geometry-gate/ray_geometry_metrics.json
+          test -s artifacts/drl-gnm-ray-geometry-gate/ray_geometry_samples.csv
+
+      - name: Enforce diagnostic contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('artifacts/drl-gnm-ray-geometry-gate/ray_geometry_metrics.json').read_text())
+          if m['valid_nearest_fraction'] < 0.95:
+              raise SystemExit('valid nearest coverage below 95%')
+          if m['samples'] < 3000:
+              raise SystemExit('too few hockey samples')
+          if m['normal_orientation']['outward_fraction_after_global_flip'] < 0.70:
+              raise SystemExit('outward normal orientation unresolved')
+          allowed={'DOMINANT_PLUS_N','DOMINANT_MINUS_N','MIXED_SIGN'}
+          if m['nearest_surface']['decision'] not in allowed:
+              raise SystemExit('signed direction classification missing')
+          rays=m['direct_ray_40mm']
+          if not (0.0 <= rays['plus_n_hit_fraction'] <= 1.0 and 0.0 <= rays['minus_n_hit_fraction'] <= 1.0):
+              raise SystemExit('invalid ray fractions')
+          if not m['contract']['real_diffuse_remains_blocked']:
+              raise SystemExit('diffuse must remain blocked')
+          print(json.dumps(m,indent=2))
+          PY
+
+      - name: Assert no DRL source or raw identity texture is uploaded
+        run: |
+          ! find artifacts/drl-gnm-ray-geometry-gate -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.png' -o -iname '*.jpg' -o -iname '*.exr' -o -iname '*.psd' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drl-gnm-ray-geometry-gate
+          path: artifacts/drl-gnm-ray-geometry-gate/
+          retention-days: 14
