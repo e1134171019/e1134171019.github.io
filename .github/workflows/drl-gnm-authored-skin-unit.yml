@@ -1,0 +1,27 @@
+name: DRL GNM Authored Skin Math Unit
+
+on:
+  push:
+    branches:
+      - experiment/gnm-authored-skin-gate
+    paths:
+      - 'tests/experiments/test_authored_skin_math.py'
+      - 'tools/experiments/authored_skin_math.py'
+      - '.github/workflows/drl-gnm-authored-skin-unit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  authored-skin-math:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install unit dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy pillow
+      - name: Run authored skin math contract
+        run: python -m pytest tests/experiments/test_authored_skin_math.py -q
