@@ -1,4 +1,5 @@
 name: DRL GNM Transfer A-B Gate
+# rerun after verified Blender 4 cage_object Object-type fix
 
 on:
   push:
