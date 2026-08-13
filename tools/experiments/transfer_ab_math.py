@@ -75,3 +75,40 @@ def accept_nearest_fallback(distance, normal_abs_dot, max_distance=0.015, min_ab
         & (distance <= max_distance)
         & (normal_abs_dot >= min_abs_dot)
     )
+
+
+def _erode_8(mask):
+    mask = np.asarray(mask, dtype=bool)
+    h, w = mask.shape
+    padded = np.pad(mask, 1, mode="constant", constant_values=False)
+    out = np.ones((h, w), dtype=bool)
+    for dy in range(3):
+        for dx in range(3):
+            out &= padded[dy:dy + h, dx:dx + w]
+    return out
+
+
+def build_feather_alpha(valid, expected, width=16):
+    valid = np.asarray(valid, dtype=bool)
+    expected = np.asarray(expected, dtype=bool)
+    if valid.shape != expected.shape or valid.ndim != 2:
+        raise ValueError("valid and expected must be same-shape 2D masks")
+    width = int(width)
+    if width <= 0:
+        raise ValueError("width must be positive")
+
+    support = valid & expected
+    alpha = np.zeros(support.shape, dtype=np.float32)
+    depth = np.zeros(support.shape, dtype=np.int32)
+    layer = support.copy()
+
+    for step in range(1, width + 1):
+        if not np.any(layer):
+            break
+        depth[layer] = step
+        layer = _erode_8(layer)
+
+    alpha[support] = np.minimum(depth[support].astype(np.float32) / float(width), 1.0)
+    alpha[~support] = 0.0
+    core = support & (depth >= width)
+    return alpha, core
