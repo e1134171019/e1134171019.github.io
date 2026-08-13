@@ -47,7 +47,9 @@ jobs:
               print(src,len(data),f'{info.CRC:08x}')
           PY
 
-      - name: Install CPU runtime and build Gaussian plus bilateral low-pass proxies
+      - name: Install CPU runtime and build consumer-domain Gaussian plus bilateral low-pass proxies
+        env:
+          PYTHONPATH: ${{ github.workspace }}
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y blender python3-numpy python3-pil python3-opencv imagemagick libegl1 libgl1 libgles2
@@ -59,41 +61,79 @@ jobs:
           python3 - <<'PY'
           import cv2, json
           import numpy as np
+          from PIL import Image
           from pathlib import Path
+          from tools.experiments.transfer_ab_math import micro_height_from_lowpass
 
-          src=cv2.imread('/tmp/drl/displace_4k.png', cv2.IMREAD_ANYDEPTH | cv2.IMREAD_GRAYSCALE)
-          if src is None or src.ndim != 2 or src.dtype != np.uint16 or min(src.shape) < 2048:
-              raise SystemExit(f'unexpected source proxy: {None if src is None else (src.shape,src.dtype)}')
-          f=src.astype(np.float32)
+          src_path=Path('/tmp/drl/displace_4k.png')
+          src_native=np.asarray(Image.open(src_path))
+          src_dtype=src_native.dtype
+          src_native_shape=list(src_native.shape)
+          src_consumer=np.asarray(Image.open(src_path),dtype=np.float64)
+          if src_consumer.ndim == 3:
+              src_consumer=src_consumer[...,0]
+          if src_consumer.ndim != 2 or min(src_consumer.shape) < 2048 or not np.isfinite(src_consumer).all():
+              raise SystemExit(f'unexpected PIL consumer source: {src_consumer.shape}/{src_consumer.dtype}')
+
+          if not np.issubdtype(src_dtype,np.integer):
+              raise SystemExit(f'unsupported consumer storage dtype: {src_dtype}')
+          storage_min=0
+          storage_max=int(np.iinfo(src_dtype).max)
+          filter_src=src_consumer.astype(np.float32)
           configs={
               'bilateral32': {'d':13,'sigmaColor':32.0,'sigmaSpace':6.0},
               'bilateral64': {'d':13,'sigmaColor':64.0,'sigmaSpace':6.0},
           }
           stats={
-              'source_shape':list(src.shape),
-              'source_dtype':str(src.dtype),
-              'source_min':int(src.min()),
-              'source_max':int(src.max()),
-              'source_p01':float(np.percentile(src,1)),
-              'source_p50':float(np.percentile(src,50)),
-              'source_p99':float(np.percentile(src,99)),
+              'source_native_shape':src_native_shape,
+              'source_native_dtype':str(src_dtype),
+              'source_consumer_shape':list(src_consumer.shape),
+              'source_consumer_min':float(src_consumer.min()),
+              'source_consumer_max':float(src_consumer.max()),
+              'source_consumer_p01':float(np.percentile(src_consumer,1)),
+              'source_consumer_p50':float(np.percentile(src_consumer,50)),
+              'source_consumer_p99':float(np.percentile(src_consumer,99)),
+              'sigma_color_units':'PIL renderer consumer intensity domain',
               'filters':{},
+              'consumer_preflight':{},
           }
+
           for name,cfg in configs.items():
-              low=cv2.bilateralFilter(f, cfg['d'], cfg['sigmaColor'], cfg['sigmaSpace'])
-              if low.shape != f.shape or not np.isfinite(low).all():
+              low=cv2.bilateralFilter(filter_src, cfg['d'], cfg['sigmaColor'], cfg['sigmaSpace'])
+              if low.shape != filter_src.shape or not np.isfinite(low).all():
                   raise SystemExit(f'{name}: invalid bilateral output')
-              residual=f-low
-              out=np.clip(np.rint(low),0,65535).astype(np.uint16)
-              path=f'/tmp/drl/lowpass_{name}.png'
-              if not cv2.imwrite(path,out):
-                  raise SystemExit(f'{name}: failed to write lowpass')
+              out=np.clip(np.rint(low),storage_min,storage_max).astype(src_dtype)
+              path=Path(f'/tmp/drl/lowpass_{name}.png')
+              Image.fromarray(out).save(path)
               stats['filters'][name]={
                   **cfg,
-                  'residual_std_raw':float(residual.std()),
-                  'residual_abs_p95_raw':float(np.percentile(np.abs(residual),95)),
-                  'residual_abs_p995_raw':float(np.percentile(np.abs(residual),99.5)),
+                  'builder_residual_std_consumer_domain':float(np.std(src_consumer-low.astype(np.float64))),
+                  'builder_residual_abs_p95_consumer_domain':float(np.percentile(np.abs(src_consumer-low.astype(np.float64)),95)),
+                  'builder_residual_abs_p995_consumer_domain':float(np.percentile(np.abs(src_consumer-low.astype(np.float64)),99.5)),
               }
+
+          variants={
+              'gaussian6':Path('/tmp/drl/lowpass_gaussian6.png'),
+              'bilateral32':Path('/tmp/drl/lowpass_bilateral32.png'),
+              'bilateral64':Path('/tmp/drl/lowpass_bilateral64.png'),
+          }
+          for name,path in variants.items():
+              low_consumer=np.asarray(Image.open(path),dtype=np.float64)
+              if low_consumer.ndim == 3:
+                  low_consumer=low_consumer[...,0]
+              if low_consumer.shape != src_consumer.shape or not np.isfinite(low_consumer).all():
+                  raise SystemExit(f'{name}: consumer round-trip mismatch {low_consumer.shape} vs {src_consumer.shape}')
+              micro,micro_stats=micro_height_from_lowpass(src_consumer,low_consumer,percentile=99.5)
+              if micro_stats['scale'] <= 0 or float(np.std(micro)) < 0.01:
+                  raise SystemExit(f'{name}: consumer residual unexpectedly flat')
+              stats['consumer_preflight'][name]={
+                  'low_consumer_min':float(low_consumer.min()),
+                  'low_consumer_max':float(low_consumer.max()),
+                  'micro_height_scale_p995':float(micro_stats['scale']),
+                  'micro_height_std_normalized':float(np.std(micro)),
+                  'micro_height_abs_p95_normalized':float(np.percentile(np.abs(micro),95)),
+              }
+
           Path('artifacts/drl-gnm-micro-surface-edge-preserving-abc/filter_proxy_stats.json').write_text(json.dumps(stats,indent=2))
           print(json.dumps(stats,indent=2))
           PY
@@ -128,13 +168,14 @@ jobs:
             done
           done
 
-      - name: Enforce numeric contract and fixed invariants
+      - name: Enforce numeric contract fixed invariants and builder-consumer parity
         run: |
           python3 - <<'PY'
           import json
           from pathlib import Path
 
           root=Path('artifacts/drl-gnm-micro-surface-edge-preserving-abc')
+          preflight=json.loads((root/'filter_proxy_stats.json').read_text())['consumer_preflight']
           variants={'A_Gaussian6':'gaussian6','B_Bilateral32':'bilateral32','C_Bilateral64':'bilateral64'}
           loaded={}
           for name,folder in variants.items():
@@ -155,6 +196,10 @@ jobs:
                   raise SystemExit(f'{name}: numeric gate failed')
               if abs(float(a['bump_distance_mm'])-0.35) > 1e-12 or abs(float(a['bump_strength'])-0.32) > 1e-12:
                   raise SystemExit(f'{name}: bump contract drifted')
+              renderer_scale=float(a['micro_height_stats']['scale'])
+              expected_scale=float(preflight[folder]['micro_height_scale_p995'])
+              if abs(renderer_scale-expected_scale) > 1e-9:
+                  raise SystemExit(f'{name}: builder-consumer parity failed {renderer_scale} != {expected_scale}')
 
           ref=loaded['A_Gaussian6']
           invariant_paths={
@@ -177,6 +222,7 @@ jobs:
 
           summary={
               'gate':'DRL_GNM_MICRO_SURFACE_EDGE_PRESERVING_ABC',
+              'representation_parity':'PASS',
               'variants':{},
               'fixed_invariants':invariants,
               'automatic_winner':None,
@@ -185,8 +231,10 @@ jobs:
           }
           for name,m in loaded.items():
               a=m['appearance_decomposition']
+              folder=variants[name]
               summary['variants'][name]={
-                  'micro_height_raw_scale_p995':a['micro_height_stats']['scale'],
+                  'preflight_micro_height_raw_scale_p995':preflight[folder]['micro_height_scale_p995'],
+                  'renderer_micro_height_raw_scale_p995':a['micro_height_stats']['scale'],
                   'micro_height_std_normalized':a['micro_height_std_normalized'],
                   'micro_height_abs_p95_normalized':a['micro_height_abs_p95_normalized'],
                   'micro_height_abs_p99_normalized':a['micro_height_abs_p99_normalized'],
