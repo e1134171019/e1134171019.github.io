@@ -1,0 +1,36 @@
+name: GNM Face Semantic Probe
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/gnm_face_semantic_probe.py'
+      - '.github/workflows/gnm-face-semantic-probe.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+      - name: Probe vertex group semantics
+        run: |
+          python3 -m pip install --disable-pip-version-check numpy
+          GNM_MODEL=/tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz python3 tools/experiments/gnm_face_semantic_probe.py
+          test -s artifacts/gnm-face-semantic-probe/gnm_face_semantics.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gnm-face-semantic-probe
+          path: artifacts/gnm-face-semantic-probe/
+          retention-days: 14
