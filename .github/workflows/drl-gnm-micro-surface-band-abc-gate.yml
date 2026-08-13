@@ -1,0 +1,215 @@
+name: DRL GNM Micro Surface Band A/B/C Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_micro_surface_gate.py'
+      - '.github/workflows/drl-gnm-micro-surface-band-abc-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  band-abc:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL OBJ and displacement privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-micro-surface-band-abc
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-micro-surface-band-abc/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          for src,dst in {
+              'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+              'Textures/Marcus_38_Displace.exr':'Marcus_38_Displace.exr',
+          }.items():
+              info=z.getinfo(src)
+              data=z.read(info)
+              Path('/tmp/drl',dst).write_bytes(data)
+              print(src,len(data),f'{info.CRC:08x}')
+          PY
+
+      - name: Install CPU runtime and build A/B/C frequency proxies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil imagemagick libegl1 libgl1 libgles2
+          OUT=artifacts/drl-gnm-micro-surface-band-abc
+          identify /tmp/drl/Marcus_38_Displace.exr | tee "$OUT/source-displacement-metadata.txt"
+          convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/Marcus_38_Displace.exr -resize '4096x4096>' -colorspace Gray -depth 16 /tmp/drl/displace_4k.png
+          identify /tmp/drl/displace_4k.png | tee "$OUT/proxy-displacement-metadata.txt"
+          for sigma in 6 12 24; do
+            label=$(printf '%02d' "$sigma")
+            convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/displace_4k.png -blur "0x${sigma}" "/tmp/drl/displace_lowpass_${label}px_4k.png"
+            identify "/tmp/drl/displace_lowpass_${label}px_4k.png" | tee "$OUT/lowpass_${label}px_metadata.txt"
+          done
+
+      - name: Execute fixed-condition A/B/C micro-surface renders
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DISPLACE_PROXY: /tmp/drl/displace_4k.png
+          TRANSFER_SIZE: '1024'
+        run: |
+          set -euo pipefail
+          OUT=artifacts/drl-gnm-micro-surface-band-abc
+          TRANSIENT=artifacts/drl-gnm-diffuse-transfer-gate
+          for sigma in 6 12 24; do
+            label=$(printf '%02d' "$sigma")
+            rm -rf "$TRANSIENT"
+            mkdir -p "$TRANSIENT" "$OUT/px${label}"
+            export DRL_DISPLACE_LOWPASS="/tmp/drl/displace_lowpass_${label}px_4k.png"
+            blender --background --python tools/experiments/drl_gnm_micro_surface_gate.py
+            test -s "$TRANSIENT/diffuse_transfer_metrics.json"
+            test -s "$TRANSIENT/00_drl_gnm_diffuse_transfer_contact_sheet.jpg"
+            cp "$TRANSIENT/diffuse_transfer_metrics.json" "$OUT/px${label}/"
+            cp "$TRANSIENT/00_drl_gnm_diffuse_transfer_contact_sheet.jpg" "$OUT/px${label}/"
+            for f in front.png three_quarter_right.png three_quarter_left.png side_right.png face_close.png face_3q_close.png; do
+              test -s "$TRANSIENT/$f"
+              cp "$TRANSIENT/$f" "$OUT/px${label}/$f"
+            done
+          done
+
+      - name: Enforce numeric contract and fixed invariants
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+
+          root=Path('artifacts/drl-gnm-micro-surface-band-abc')
+          bands={'A_6px':'px06','B_12px':'px12','C_24px':'px24'}
+          loaded={}
+          for name,folder in bands.items():
+              p=root/folder/'diffuse_transfer_metrics.json'
+              m=json.loads(p.read_text())
+              loaded[name]=m
+              a=m['appearance_decomposition']
+              if a['identity_diffuse_used']:
+                  raise SystemExit(f'{name}: identity diffuse must be excluded')
+              if not a['lowpass_removed']:
+                  raise SystemExit(f'{name}: low-frequency displacement must be removed')
+              if a['micro_height_abs_p95_normalized'] <= 0.01:
+                  raise SystemExit(f'{name}: micro height is flat')
+              if m['correspondence']['valid_fraction'] < 0.70:
+                  raise SystemExit(f'{name}: high-confidence correspondence too small')
+              if m['blend']['invalid_correspondence_nonzero_alpha'] != 0:
+                  raise SystemExit(f'{name}: invalid correspondence leaked into bump')
+              if not m['decision']['pass']:
+                  raise SystemExit(f'{name}: numeric gate failed')
+              if not m['decision_contract']['this_is_micro_surface_only_not_final_skin']:
+                  raise SystemExit(f'{name}: scope contract missing')
+              if abs(float(a['bump_distance_mm'])-0.35) > 1e-12:
+                  raise SystemExit(f'{name}: bump distance drifted')
+              if abs(float(a['bump_strength'])-0.32) > 1e-12:
+                  raise SystemExit(f'{name}: bump strength drifted')
+
+          ref=loaded['A_6px']
+          invariants={
+              'valid_fraction': ref['correspondence']['valid_fraction'],
+              'ray_accepted_pixels': ref['correspondence']['ray_accepted_pixels'],
+              'safe_nearest_fallback_pixels': ref['correspondence']['safe_nearest_fallback_pixels'],
+              'full_alpha_core_fraction': ref['blend']['full_alpha_core_fraction'],
+              'bump_distance_mm': ref['appearance_decomposition']['bump_distance_mm'],
+              'bump_strength': ref['appearance_decomposition']['bump_strength'],
+          }
+          for name,m in loaded.items():
+              checks={
+                  'valid_fraction': m['correspondence']['valid_fraction'],
+                  'ray_accepted_pixels': m['correspondence']['ray_accepted_pixels'],
+                  'safe_nearest_fallback_pixels': m['correspondence']['safe_nearest_fallback_pixels'],
+                  'full_alpha_core_fraction': m['blend']['full_alpha_core_fraction'],
+                  'bump_distance_mm': m['appearance_decomposition']['bump_distance_mm'],
+                  'bump_strength': m['appearance_decomposition']['bump_strength'],
+              }
+              for k,v in checks.items():
+                  rv=invariants[k]
+                  if isinstance(rv,float):
+                      if abs(float(v)-float(rv)) > 1e-12:
+                          raise SystemExit(f'{name}: invariant {k} drifted: {v} != {rv}')
+                  elif v != rv:
+                      raise SystemExit(f'{name}: invariant {k} drifted: {v} != {rv}')
+
+          summary={
+              'gate':'DRL_GNM_MICRO_SURFACE_FREQUENCY_BAND_ABC',
+              'bands':{},
+              'fixed_invariants':invariants,
+              'automatic_winner':None,
+              'visual_decision':'PENDING_GPT_VISUAL_REVIEW',
+              'visual_criteria':[
+                  'pore_retention',
+                  'fine_wrinkle_retention',
+                  'meso_scale_oval_scar_relief_suppression',
+                  'local_seam_artifacts',
+                  'whole_face_uniformity',
+              ],
+          }
+          for name,m in loaded.items():
+              a=m['appearance_decomposition']
+              summary['bands'][name]={
+                  'micro_height_std_normalized':a['micro_height_std_normalized'],
+                  'micro_height_abs_p95_normalized':a['micro_height_abs_p95_normalized'],
+                  'micro_height_abs_p99_normalized':a['micro_height_abs_p99_normalized'],
+                  'numeric_pass':m['decision']['pass'],
+              }
+          (root/'band_summary.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+
+      - name: Build A/B/C visual comparison sheets
+        run: |
+          OUT=artifacts/drl-gnm-micro-surface-band-abc
+          montage \
+            -label 'A = 6 px' "$OUT/px06/face_close.png" \
+            -label 'B = 12 px' "$OUT/px12/face_close.png" \
+            -label 'C = 24 px' "$OUT/px24/face_close.png" \
+            -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_face_close.jpg"
+          montage \
+            -label 'A = 6 px' "$OUT/px06/face_3q_close.png" \
+            -label 'B = 12 px' "$OUT/px12/face_3q_close.png" \
+            -label 'C = 24 px' "$OUT/px24/face_3q_close.png" \
+            -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_face_3q_close.jpg"
+          montage \
+            -label 'A = 6 px' "$OUT/px06/front.png" \
+            -label 'B = 12 px' "$OUT/px12/front.png" \
+            -label 'C = 24 px' "$OUT/px24/front.png" \
+            -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_front.jpg"
+          montage \
+            -label 'A = 6 px' "$OUT/px06/three_quarter_right.png" \
+            -label 'B = 12 px' "$OUT/px12/three_quarter_right.png" \
+            -label 'C = 24 px' "$OUT/px24/three_quarter_right.png" \
+            -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_three_quarter_right.jpg"
+          for f in ABC_face_close.jpg ABC_face_3q_close.jpg ABC_front.jpg ABC_three_quarter_right.jpg band_summary.json; do
+            test -s "$OUT/$f"
+          done
+
+      - name: Assert no raw or derived DRL appearance maps are redistributed
+        run: |
+          OUT=artifacts/drl-gnm-micro-surface-band-abc
+          ! find "$OUT" -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.psd' -o -iname '*.exr' \) | grep .
+          ! find "$OUT" -type f \( -iname 'displace_4k.png' -o -iname 'displace_lowpass_*' -o -iname '*micro_height*.png' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-micro-surface-band-abc-gate
+          path: artifacts/drl-gnm-micro-surface-band-abc/
+          retention-days: 14
