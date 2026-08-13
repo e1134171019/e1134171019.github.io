@@ -1,0 +1,96 @@
+name: DRL GNM Transfer A-B Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_transfer_ab_gate.py'
+      - 'tools/experiments/transfer_ab_math.py'
+      - '.github/workflows/drl-gnm-transfer-ab-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  compare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL donor OBJ privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-transfer-ab-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-transfer-ab-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          src='OBJ/Marcus_PBR_Sample_01.obj'
+          info=z.getinfo(src)
+          data=z.read(info)
+          Path('/tmp/drl/Marcus_PBR_Sample_01.obj').write_bytes(data)
+          print(src,len(data),f'{info.CRC:08x}')
+          PY
+
+      - name: Install CPU bake and geometry runtime
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil libegl1 libgl1 libgles2
+
+      - name: Execute A-B white coverage gate
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          COVERAGE_SIZE: '1024'
+        run: |
+          blender --background --python tools/experiments/drl_gnm_transfer_ab_gate.py
+          test -s artifacts/drl-gnm-transfer-ab-gate/transfer_ab_metrics.json
+          test -s artifacts/drl-gnm-transfer-ab-gate/expected_hockey_uv.png
+          test -s artifacts/drl-gnm-transfer-ab-gate/cycles_explicit_cage_coverage.png
+          test -s artifacts/drl-gnm-transfer-ab-gate/cpu_bidirectional_coverage.png
+          test -s artifacts/drl-gnm-transfer-ab-gate/ab_coverage_comparison.png
+
+      - name: Enforce A-B decision contract
+        id: contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('artifacts/drl-gnm-transfer-ab-gate/transfer_ab_metrics.json').read_text())
+          print(json.dumps(m, indent=2))
+          if m['expected_hockey_uv_pixels'] < 10000:
+              raise SystemExit('expected hockey UV footprint too small')
+          if m['comparison']['selected_backend'] == 'NONE_BLOCKED':
+              raise SystemExit('neither transfer backend reached safe 95% coverage')
+          if not m['comparison']['real_diffuse_allowed_next']:
+              raise SystemExit('backend selected but diffuse permission missing')
+          if m['source_protection']['raw_identity_texture_used']:
+              raise SystemExit('identity texture must not be used in coverage A/B')
+          PY
+
+      - name: Assert safe artifact contents
+        if: always()
+        run: |
+          ! find artifacts/drl-gnm-transfer-ab-gate -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.exr' -o -iname '*.psd' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-transfer-ab-gate
+          path: artifacts/drl-gnm-transfer-ab-gate/
+          retention-days: 14
