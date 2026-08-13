@@ -60,14 +60,23 @@ class TransferABMathContractTest(unittest.TestCase):
         np.testing.assert_allclose(rgb[1], [0,255,0], atol=1e-6)
 
     def test_anatomical_anchor_rejects_source_that_was_pulled_from_neck(self):
-        try:
-            from tools.experiments.transfer_ab_math import accept_anatomical_anchor
-        except ImportError as exc:
-            self.fail(f"anatomical anchor helper missing: {exc}")
+        from tools.experiments.transfer_ab_math import accept_anatomical_anchor
         target = np.array([[0.0, 0.0, 0.10], [0.0, 0.0, 0.10], [0.0, 0.0, 0.10]])
         donor_rigid = np.array([[0.01, 0.02, 0.08], [0.04, 0.01, 0.09], [0.01, 0.01, 0.06]])
         accepted = accept_anatomical_anchor(target, donor_rigid)
         self.assertEqual(accepted.tolist(), [True, False, False])
+
+    def test_semantic_region_pair_requires_same_region_and_both_near_reference(self):
+        try:
+            from tools.experiments.transfer_ab_math import accept_semantic_region_pair
+        except ImportError as exc:
+            self.fail(f"semantic region helper missing: {exc}")
+        target_label = np.array([3, 3, 5, 7])
+        donor_label = np.array([3, 5, 5, 7])
+        target_dist = np.array([0.004, 0.003, 0.013, 0.006])
+        donor_dist = np.array([0.010, 0.004, 0.005, 0.014])
+        accepted = accept_semantic_region_pair(target_label, donor_label, target_dist, donor_dist)
+        self.assertEqual(accepted.tolist(), [True, False, False, False])
 
 
 if __name__ == "__main__":
