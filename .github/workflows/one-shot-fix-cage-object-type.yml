@@ -1,0 +1,41 @@
+name: One Shot Fix Cage Object Type
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - '.github/workflows/one-shot-fix-cage-object-type.yml'
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: experiment/gnm-appearance-gate
+      - name: Apply only the verified Blender API type fix
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          p=Path('tools/experiments/drl_gnm_transfer_ab_gate.py')
+          s=p.read_text()
+          old="scene.render.bake.cage_object = cage.name"
+          new="scene.render.bake.cage_object = cage"
+          if s.count(old) != 1:
+              raise SystemExit(f'expected exactly one old API assignment, found {s.count(old)}')
+          p.write_text(s.replace(old,new))
+          PY
+          git diff --check
+          git diff -- tools/experiments/drl_gnm_transfer_ab_gate.py
+      - name: Commit the single-line fix
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tools/experiments/drl_gnm_transfer_ab_gate.py
+          git diff --cached --exit-code && { echo 'expected a one-line change'; exit 1; } || true
+          git commit -m 'fix(character): pass Blender cage object instead of name'
+          git push origin HEAD:experiment/gnm-appearance-gate
