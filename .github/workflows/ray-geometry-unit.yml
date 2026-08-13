@@ -1,0 +1,24 @@
+name: Ray Geometry Unit
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tests/experiments/test_ray_geometry_math.py'
+      - 'tools/experiments/ray_geometry_math.py'
+      - '.github/workflows/ray-geometry-unit.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install NumPy
+        run: python3 -m pip install --disable-pip-version-check numpy
+      - name: Run signed-distance contract
+        run: python3 -m unittest tests/experiments/test_ray_geometry_math.py -v
