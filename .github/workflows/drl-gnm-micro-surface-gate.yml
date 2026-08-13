@@ -1,0 +1,105 @@
+name: DRL GNM Micro Surface Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_micro_surface_gate.py'
+      - '.github/workflows/drl-gnm-micro-surface-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  micro-surface:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+      - name: Acquire DRL OBJ and displacement privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-diffuse-transfer-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-diffuse-transfer-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          for src,dst in {
+              'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+              'Textures/Marcus_38_Displace.exr':'Marcus_38_Displace.exr',
+          }.items():
+              info=z.getinfo(src); data=z.read(info); Path('/tmp/drl',dst).write_bytes(data)
+              print(src,len(data),f'{info.CRC:08x}')
+          PY
+      - name: Install CPU runtime and build displacement frequency proxies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil imagemagick libegl1 libgl1 libgles2
+          identify /tmp/drl/Marcus_38_Displace.exr | tee artifacts/drl-gnm-diffuse-transfer-gate/source-displacement-metadata.txt
+          convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/Marcus_38_Displace.exr -resize '4096x4096>' -colorspace Gray -depth 16 /tmp/drl/displace_4k.png
+          convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/displace_4k.png -blur 0x24 /tmp/drl/displace_lowpass_4k.png
+          identify /tmp/drl/displace_4k.png | tee artifacts/drl-gnm-diffuse-transfer-gate/proxy-displacement-metadata.txt
+          identify /tmp/drl/displace_lowpass_4k.png | tee artifacts/drl-gnm-diffuse-transfer-gate/lowpass-displacement-metadata.txt
+      - name: Execute high-frequency micro-surface Gate
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DISPLACE_PROXY: /tmp/drl/displace_4k.png
+          DRL_DISPLACE_LOWPASS: /tmp/drl/displace_lowpass_4k.png
+          TRANSFER_SIZE: '1024'
+        run: |
+          blender --background --python tools/experiments/drl_gnm_micro_surface_gate.py
+          test -s artifacts/drl-gnm-diffuse-transfer-gate/diffuse_transfer_metrics.json
+          test -s artifacts/drl-gnm-diffuse-transfer-gate/00_drl_gnm_diffuse_transfer_contact_sheet.jpg
+          for f in front.png three_quarter_right.png three_quarter_left.png side_right.png face_close.png face_3q_close.png; do
+            test -s "artifacts/drl-gnm-diffuse-transfer-gate/$f"
+          done
+      - name: Enforce micro-surface numeric contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('artifacts/drl-gnm-diffuse-transfer-gate/diffuse_transfer_metrics.json').read_text())
+          print(json.dumps(m,indent=2))
+          a=m['appearance_decomposition']
+          if a['identity_diffuse_used']:
+              raise SystemExit('identity diffuse must be excluded')
+          if not a['lowpass_removed']:
+              raise SystemExit('low-frequency displacement must be removed')
+          if a['micro_height_abs_p95_normalized'] <= 0.01:
+              raise SystemExit('micro height is flat')
+          if m['correspondence']['valid_fraction'] < 0.70:
+              raise SystemExit('high-confidence correspondence too small for diagnostic')
+          if m['blend']['invalid_correspondence_nonzero_alpha'] != 0:
+              raise SystemExit('invalid correspondence leaked into bump')
+          if not m['decision']['pass']:
+              raise SystemExit('micro-surface numeric gate failed')
+          if not m['decision_contract']['this_is_micro_surface_only_not_final_skin']:
+              raise SystemExit('scope contract missing')
+          PY
+      - name: Assert no raw/derived DRL appearance maps are redistributed
+        run: |
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/Marcus_38_Displace.exr
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/displace_4k.png
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/displace_lowpass_4k.png
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/gnm_drl_micro_height_1024.png
+          ! find artifacts/drl-gnm-diffuse-transfer-gate -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.psd' -o -iname '*.exr' \) | grep .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-micro-surface-gate
+          path: artifacts/drl-gnm-diffuse-transfer-gate/
+          retention-days: 14
