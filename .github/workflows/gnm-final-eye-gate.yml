@@ -1,0 +1,165 @@
+name: GNM Final Eye Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-final-eye-gate
+    paths:
+      - 'tools/experiments/gnm_final_eye_gate.py'
+      - 'tools/experiments/eye_gate_math.py'
+      - 'tests/experiments/test_eye_gate_math.py'
+      - '.github/workflows/gnm-final-eye-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  final-eye:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enforce frozen authored-skin source boundary
+        run: |
+          git fetch --depth=1 origin experiment/gnm-authored-skin-gate
+          git diff --exit-code FETCH_HEAD -- \
+            tools/experiments/drl_gnm_authored_skin_gate.py \
+            tools/experiments/authored_skin_math.py \
+            tools/experiments/drl_gnm_micro_surface_gate.py \
+            tools/experiments/drl_gnm_diffuse_transfer_gate.py \
+            tools/experiments/transfer_ab_math.py
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire verified DRL frozen-skin inputs privately
+        run: |
+          mkdir -p /tmp/drl artifacts/gnm-final-eye-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/gnm-final-eye-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          wanted={
+              'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+              'Textures/Marcus_38_diffuse.png':'Marcus_38_diffuse.png',
+              'Textures/Marcus_38_glossiness.png':'Marcus_38_glossiness.png',
+              'Textures/Marcus_01_specular.png':'Marcus_01_specular.png',
+              'Textures/Marcus_38_Displace.exr':'Marcus_38_Displace.exr',
+          }
+          for src,dst in wanted.items():
+              info=z.getinfo(src)
+              Path('/tmp/drl',dst).write_bytes(z.read(info))
+              print(src, info.file_size, f'{info.CRC:08x}')
+          PY
+
+      - name: Install CPU render and run unit regressions
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil python3-opencv python3-pytest imagemagick libegl1 libgl1 libgles2
+          python3 -m pytest tests/experiments/test_authored_skin_math.py tests/experiments/test_eye_gate_math.py -q
+          python3 -m py_compile tools/experiments/gnm_final_eye_gate.py tools/experiments/eye_gate_math.py tools/experiments/drl_gnm_authored_skin_gate.py
+
+      - name: Build frozen authored-skin working proxies
+        run: |
+          OUT=artifacts/gnm-final-eye-gate
+          convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/Marcus_38_diffuse.png -resize '2048x2048>' /tmp/drl/diffuse_2k.png
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_glossiness.png -resize '2048x2048>' -colorspace Gray /tmp/drl/glossiness_2k.png
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_01_specular.png -resize '2048x2048>' -colorspace Gray /tmp/drl/specular_2k.png
+          convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/Marcus_38_Displace.exr -resize '4096x4096>' -colorspace Gray -depth 16 /tmp/drl/displace_4k.png
+          python3 - <<'PY'
+          import cv2
+          import numpy as np
+          raw=cv2.imread('/tmp/drl/displace_4k.png', cv2.IMREAD_ANYDEPTH | cv2.IMREAD_GRAYSCALE)
+          if raw is None or raw.ndim != 2 or raw.dtype != np.uint16 or min(raw.shape) < 2048:
+              raise SystemExit(f'unexpected displacement proxy: {None if raw is None else (raw.shape, raw.dtype)}')
+          low=cv2.bilateralFilter(raw.astype(np.float32), 13, 32.0, 6.0)
+          low=np.clip(np.rint(low),0,65535).astype(np.uint16)
+          if not cv2.imwrite('/tmp/drl/displace_bilateral32_4k.png', low):
+              raise SystemExit('failed to write Bilateral32 low-pass')
+          check=cv2.imread('/tmp/drl/displace_bilateral32_4k.png', cv2.IMREAD_ANYDEPTH | cv2.IMREAD_GRAYSCALE)
+          if check is None or check.shape != raw.shape or check.dtype != np.uint16:
+              raise SystemExit('Bilateral32 roundtrip format mismatch')
+          PY
+          identify /tmp/drl/diffuse_2k.png > "$OUT/diffuse-proxy-metadata.txt"
+          identify /tmp/drl/glossiness_2k.png > "$OUT/glossiness-proxy-metadata.txt"
+          identify /tmp/drl/specular_2k.png > "$OUT/specular-proxy-metadata.txt"
+          identify /tmp/drl/displace_4k.png > "$OUT/displacement-proxy-metadata.txt"
+          identify /tmp/drl/displace_bilateral32_4k.png > "$OUT/bilateral32-lowpass-metadata.txt"
+
+      - name: Preserve DRL source usage evidence
+        run: |
+          curl -L --fail --retry 3 -A 'Mozilla/5.0' -o artifacts/gnm-final-eye-gate/sample-model.html https://www.digitalrealitylab.com/sample-model/
+          grep -Eqi 'commercial|personal' artifacts/gnm-final-eye-gate/sample-model.html
+
+      - name: Execute single final-eye candidate over frozen skin
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DIFFUSE: /tmp/drl/diffuse_2k.png
+          DRL_GLOSSINESS: /tmp/drl/glossiness_2k.png
+          DRL_SPECULAR: /tmp/drl/specular_2k.png
+          DRL_DISPLACE_PROXY: /tmp/drl/displace_4k.png
+          DRL_DISPLACE_LOWPASS: /tmp/drl/displace_bilateral32_4k.png
+          TRANSFER_SIZE: '1024'
+        run: |
+          blender --background --python tools/experiments/gnm_final_eye_gate.py
+          test -s artifacts/gnm-final-eye-gate/eye_metrics.json
+          test -s artifacts/gnm-final-eye-gate/authored_skin_metrics.json
+          test -s artifacts/gnm-final-eye-gate/00_gnm_final_eye_review_contact_sheet.jpg
+          for f in front.png three_quarter_right.png face_close.png face_3q_close.png; do
+            test -s "artifacts/gnm-final-eye-gate/$f"
+          done
+
+      - name: Enforce final-eye numeric and scope contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('artifacts/gnm-final-eye-gate/eye_metrics.json').read_text())
+          print(json.dumps(m,indent=2))
+          if not m['decision']['pass']:
+              raise SystemExit('final eye numeric gate failed')
+          if m['frozen_parent']['status'] != 'PASS_FREEZE_SKIN_MATERIAL_STAGE' or not m['frozen_parent']['skin_frozen']:
+              raise SystemExit('frozen skin boundary missing')
+          if m['frozen_parent']['micro_surface'] != 'bilateral32':
+              raise SystemExit('Bilateral32 selection drifted')
+          counts=m['eye']['semantic_partition']
+          if any(int(counts[k]) <= 0 for k in ('sclera','iris','pupil','cornea')):
+              raise SystemExit(f'empty final eye semantic partition: {counts}')
+          a=m['eye']['alignment']; d=m['decision_contract']
+          if a['max_pupil_to_iris_offset_ratio'] > d['maximum_pupil_to_iris_offset_ratio']:
+              raise SystemExit('pupil/iris alignment failed')
+          if a['gaze_mismatch_ratio'] > d['maximum_gaze_mismatch_ratio']:
+              raise SystemExit('bilateral gaze mismatch failed')
+          if a['sclera_bilateral_size_mismatch_ratio'] > d['maximum_sclera_bilateral_size_mismatch_ratio']:
+              raise SystemExit('bilateral sclera symmetry failed')
+          if d['final_character_adopted'] is not False or d['visual_decision'] != 'PENDING_GPT_VISUAL_REVIEW':
+              raise SystemExit('scope contract drifted')
+          PY
+
+      - name: Assert no raw or derived material maps are redistributed
+        run: |
+          OUT=artifacts/gnm-final-eye-gate
+          ! find "$OUT" -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.exr' \) | grep .
+          ! find "$OUT" -type f | grep -Ei '/(Marcus_38_diffuse|Marcus_38_glossiness|Marcus_01_specular|Marcus_38_Displace|gnm_authored_base|gnm_authored_roughness|gnm_authored_specular|gnm_bilateral32_micro_height)\.'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gnm-final-eye-gate
+          path: artifacts/gnm-final-eye-gate/
+          if-no-files-found: error
+          retention-days: 14
