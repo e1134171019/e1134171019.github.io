@@ -1,0 +1,23 @@
+name: GNM Cornea Catchlight Unit
+
+on:
+  push:
+    branches:
+      - experiment/gnm-cornea-catchlight-fix
+    paths:
+      - 'tests/experiments/test_cornea_material_contract.py'
+      - 'tools/experiments/cornea_material_contract.py'
+      - '.github/workflows/gnm-cornea-catchlight-unit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run cornea material contract
+        run: |
+          python3 -m pytest tests/experiments/test_cornea_material_contract.py -q
