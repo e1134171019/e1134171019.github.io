@@ -37,6 +37,22 @@ class TransferABMathContractTest(unittest.TestCase):
         accepted = accept_nearest_fallback(distance, normal_abs_dot)
         self.assertEqual(accepted.tolist(), [True, False, False, True])
 
+    def test_feather_alpha_never_uses_invalid_correspondence(self):
+        from tools.experiments.transfer_ab_math import build_feather_alpha
+
+        expected = np.ones((9, 9), dtype=bool)
+        valid = np.ones((9, 9), dtype=bool)
+        valid[4, 4] = False
+        alpha, core = build_feather_alpha(valid, expected, width=2)
+
+        self.assertEqual(float(alpha[4, 4]), 0.0)
+        self.assertTrue(np.all(alpha[~valid] == 0.0))
+        self.assertTrue(np.all(alpha[~expected] == 0.0))
+        self.assertTrue(np.any(core))
+        self.assertTrue(np.all(alpha[core] == 1.0))
+        self.assertGreater(float(alpha[4, 3]), 0.0)
+        self.assertLess(float(alpha[4, 3]), 1.0)
+
 
 if __name__ == "__main__":
     unittest.main()
