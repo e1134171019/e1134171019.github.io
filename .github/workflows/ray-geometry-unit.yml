@@ -6,7 +6,9 @@ on:
       - experiment/gnm-appearance-gate
     paths:
       - 'tests/experiments/test_ray_geometry_math.py'
+      - 'tests/experiments/test_transfer_ab_math.py'
       - 'tools/experiments/ray_geometry_math.py'
+      - 'tools/experiments/transfer_ab_math.py'
       - '.github/workflows/ray-geometry-unit.yml'
 
 permissions:
@@ -20,5 +22,5 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install NumPy
         run: python3 -m pip install --disable-pip-version-check numpy
-      - name: Run signed-distance contract
-        run: python3 -m unittest tests/experiments/test_ray_geometry_math.py -v
+      - name: Run geometry contracts
+        run: python3 -m unittest tests/experiments/test_ray_geometry_math.py tests/experiments/test_transfer_ab_math.py -v
