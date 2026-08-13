@@ -62,3 +62,16 @@ def choose_bidirectional_hits(plus_distance, minus_distance):
     distance[only_p | choose_p] = plus[only_p | choose_p]
     distance[only_m | choose_m] = minus[only_m | choose_m]
     return choice, distance
+
+
+def accept_nearest_fallback(distance, normal_abs_dot, max_distance=0.015, min_abs_dot=0.5):
+    distance = np.asarray(distance, dtype=np.float64)
+    normal_abs_dot = np.asarray(normal_abs_dot, dtype=np.float64)
+    if distance.shape != normal_abs_dot.shape:
+        raise ValueError("distance and normal_abs_dot must have identical shapes")
+    return (
+        np.isfinite(distance)
+        & np.isfinite(normal_abs_dot)
+        & (distance <= max_distance)
+        & (normal_abs_dot >= min_abs_dot)
+    )
