@@ -54,12 +54,20 @@ class TransferABMathContractTest(unittest.TestCase):
 
     def test_bilinear_uv_sampling_uses_bottom_left_uv_convention(self):
         from tools.experiments.transfer_ab_math import sample_image_bilinear
-        # top row red/green, bottom row blue/white in image-array coordinates
         img = np.array([[[255,0,0],[0,255,0]],[[0,0,255],[255,255,255]]], dtype=np.uint8)
-        # UV (0,0) is bottom-left, so it must sample blue.
         rgb = sample_image_bilinear(img, np.array([[0.0,0.0],[1.0,1.0]]))
         np.testing.assert_allclose(rgb[0], [0,0,255], atol=1e-6)
         np.testing.assert_allclose(rgb[1], [0,255,0], atol=1e-6)
+
+    def test_anatomical_anchor_rejects_source_that_was_pulled_from_neck(self):
+        try:
+            from tools.experiments.transfer_ab_math import accept_anatomical_anchor
+        except ImportError as exc:
+            self.fail(f"anatomical anchor helper missing: {exc}")
+        target = np.array([[0.0, 0.0, 0.10], [0.0, 0.0, 0.10], [0.0, 0.0, 0.10]])
+        donor_rigid = np.array([[0.01, 0.02, 0.08], [0.04, 0.01, 0.09], [0.01, 0.01, 0.06]])
+        accepted = accept_anatomical_anchor(target, donor_rigid)
+        self.assertEqual(accepted.tolist(), [True, False, False])
 
 
 if __name__ == "__main__":
