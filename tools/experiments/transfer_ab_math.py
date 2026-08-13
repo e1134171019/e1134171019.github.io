@@ -112,3 +112,55 @@ def build_feather_alpha(valid, expected, width=16):
     alpha[~support] = 0.0
     core = support & (depth >= width)
     return alpha, core
+
+
+def barycentric_coordinates_3d(point, triangle, eps=1e-14):
+    p = np.asarray(point, dtype=np.float64)
+    tri = np.asarray(triangle, dtype=np.float64)
+    if p.shape != (3,) or tri.shape != (3, 3):
+        raise ValueError("point must have shape (3,) and triangle shape (3,3)")
+    a, b, c = tri
+    v0 = b - a
+    v1 = c - a
+    v2 = p - a
+    d00 = float(np.dot(v0, v0))
+    d01 = float(np.dot(v0, v1))
+    d11 = float(np.dot(v1, v1))
+    d20 = float(np.dot(v2, v0))
+    d21 = float(np.dot(v2, v1))
+    den = d00 * d11 - d01 * d01
+    if abs(den) <= eps:
+        raise ValueError("degenerate 3D triangle")
+    vb = (d11 * d20 - d01 * d21) / den
+    vc = (d00 * d21 - d01 * d20) / den
+    va = 1.0 - vb - vc
+    return np.asarray([va, vb, vc], dtype=np.float64)
+
+
+def sample_image_bilinear(image, uv):
+    img = np.asarray(image)
+    coords = np.asarray(uv, dtype=np.float64)
+    if img.ndim != 3 or img.shape[2] < 3:
+        raise ValueError("image must have shape (H,W,C>=3)")
+    if coords.ndim == 1:
+        coords = coords[None, :]
+    if coords.ndim != 2 or coords.shape[1] != 2:
+        raise ValueError("uv must have shape (N,2)")
+
+    h, w = img.shape[:2]
+    u = np.clip(coords[:, 0], 0.0, 1.0) * (w - 1)
+    v = (1.0 - np.clip(coords[:, 1], 0.0, 1.0)) * (h - 1)
+    x0 = np.floor(u).astype(np.int64)
+    y0 = np.floor(v).astype(np.int64)
+    x1 = np.minimum(x0 + 1, w - 1)
+    y1 = np.minimum(y0 + 1, h - 1)
+    fx = (u - x0)[:, None]
+    fy = (v - y0)[:, None]
+
+    c00 = img[y0, x0, :3].astype(np.float64)
+    c10 = img[y0, x1, :3].astype(np.float64)
+    c01 = img[y1, x0, :3].astype(np.float64)
+    c11 = img[y1, x1, :3].astype(np.float64)
+    top = c00 * (1.0 - fx) + c10 * fx
+    bottom = c01 * (1.0 - fx) + c11 * fx
+    return top * (1.0 - fy) + bottom * fy
