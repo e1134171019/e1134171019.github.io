@@ -1,0 +1,182 @@
+name: DRL GNM Micro Surface Edge-Preserving A/B/C Gate v2
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_micro_surface_gate.py'
+      - '.github/workflows/drl-gnm-micro-surface-edge-preserving-abc-gate-v2.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  edge-preserving-abc-v2:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+
+      - name: Acquire DRL OBJ and displacement privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          for src,dst in {
+              'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj',
+              'Textures/Marcus_38_Displace.exr':'Marcus_38_Displace.exr',
+          }.items():
+              Path('/tmp/drl',dst).write_bytes(z.read(src))
+          PY
+
+      - name: Build photometrically identical 16-bit source and low-pass variants
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil python3-opencv imagemagick libegl1 libgl1 libgles2
+          OUT=artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2
+          convert -limit memory 1536MiB -limit map 3072MiB /tmp/drl/Marcus_38_Displace.exr -resize '4096x4096>' -colorspace Gray -depth 16 /tmp/drl/displace_raw.png
+          python3 - <<'PY'
+          import cv2, json
+          import numpy as np
+          from pathlib import Path
+
+          raw=cv2.imread('/tmp/drl/displace_raw.png', cv2.IMREAD_ANYDEPTH | cv2.IMREAD_GRAYSCALE)
+          if raw is None or raw.ndim != 2 or raw.dtype != np.uint16 or min(raw.shape) < 2048:
+              raise SystemExit(f'unexpected raw proxy: {None if raw is None else (raw.shape, raw.dtype)}')
+          src=raw.astype(np.float32)
+          if not cv2.imwrite('/tmp/drl/displace_4k.png', raw):
+              raise SystemExit('failed to write standardized source proxy')
+
+          variants={
+              'gaussian6': cv2.GaussianBlur(src, (0,0), 6.0),
+              'bilateral32': cv2.bilateralFilter(src, 13, 32.0, 6.0),
+              'bilateral64': cv2.bilateralFilter(src, 13, 64.0, 6.0),
+          }
+          stats={'source_shape':list(raw.shape),'source_dtype':str(raw.dtype),'source_min':int(raw.min()),'source_max':int(raw.max()),'source_median':float(np.median(raw)),'variants':{}}
+          for name,low in variants.items():
+              out=np.clip(np.rint(low),0,65535).astype(np.uint16)
+              path=f'/tmp/drl/lowpass_{name}.png'
+              if not cv2.imwrite(path,out):
+                  raise SystemExit(f'{name}: failed to write lowpass')
+              check=cv2.imread(path, cv2.IMREAD_ANYDEPTH | cv2.IMREAD_GRAYSCALE)
+              if check is None or check.shape != raw.shape or check.dtype != np.uint16:
+                  raise SystemExit(f'{name}: roundtrip format mismatch')
+              residual=raw.astype(np.float64)-check.astype(np.float64)
+              stats['variants'][name]={
+                  'residual_median_raw':float(np.median(residual)),
+                  'residual_std_raw':float(residual.std()),
+                  'residual_abs_p95_raw':float(np.percentile(np.abs(residual),95)),
+                  'residual_abs_p995_raw':float(np.percentile(np.abs(residual),99.5)),
+              }
+          Path('artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2/filter_proxy_stats.json').write_text(json.dumps(stats,indent=2))
+          print(json.dumps(stats,indent=2))
+          PY
+          identify /tmp/drl/displace_4k.png | tee "$OUT/source_proxy_metadata.txt"
+          identify /tmp/drl/lowpass_gaussian6.png | tee "$OUT/lowpass_gaussian6_metadata.txt"
+          identify /tmp/drl/lowpass_bilateral32.png | tee "$OUT/lowpass_bilateral32_metadata.txt"
+          identify /tmp/drl/lowpass_bilateral64.png | tee "$OUT/lowpass_bilateral64_metadata.txt"
+
+      - name: Execute fixed-condition edge-preserving A/B/C renders
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DISPLACE_PROXY: /tmp/drl/displace_4k.png
+          TRANSFER_SIZE: '1024'
+        run: |
+          set -euo pipefail
+          OUT=artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2
+          TRANSIENT=artifacts/drl-gnm-diffuse-transfer-gate
+          for variant in gaussian6 bilateral32 bilateral64; do
+            rm -rf "$TRANSIENT"
+            mkdir -p "$TRANSIENT" "$OUT/$variant"
+            export DRL_DISPLACE_LOWPASS="/tmp/drl/lowpass_${variant}.png"
+            blender --background --python tools/experiments/drl_gnm_micro_surface_gate.py
+            cp "$TRANSIENT/diffuse_transfer_metrics.json" "$OUT/$variant/"
+            for f in front.png three_quarter_right.png three_quarter_left.png side_right.png face_close.png face_3q_close.png; do
+              test -s "$TRANSIENT/$f"
+              cp "$TRANSIENT/$f" "$OUT/$variant/$f"
+            done
+          done
+
+      - name: Enforce photometric and fixed-condition contracts
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          root=Path('artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2')
+          fs=json.loads((root/'filter_proxy_stats.json').read_text())
+          for name,s in fs['variants'].items():
+              if abs(float(s['residual_median_raw'])) > 2.0:
+                  raise SystemExit(f'{name}: residual median indicates photometric mismatch: {s}')
+
+          names=['gaussian6','bilateral32','bilateral64']
+          loaded={n:json.loads((root/n/'diffuse_transfer_metrics.json').read_text()) for n in names}
+          ref=loaded['gaussian6']
+          keys=[
+              ('valid_fraction',lambda m:m['correspondence']['valid_fraction']),
+              ('ray_accepted_pixels',lambda m:m['correspondence']['ray_accepted_pixels']),
+              ('safe_nearest_fallback_pixels',lambda m:m['correspondence']['safe_nearest_fallback_pixels']),
+              ('full_alpha_core_fraction',lambda m:m['blend']['full_alpha_core_fraction']),
+              ('bump_distance_mm',lambda m:m['appearance_decomposition']['bump_distance_mm']),
+              ('bump_strength',lambda m:m['appearance_decomposition']['bump_strength']),
+          ]
+          invariants={k:f(ref) for k,f in keys}
+          summary={'gate':'DRL_GNM_MICRO_SURFACE_EDGE_PRESERVING_ABC_V2','fixed_invariants':invariants,'variants':{},'visual_decision':'PENDING_GPT_VISUAL_REVIEW'}
+          for n,m in loaded.items():
+              a=m['appearance_decomposition']
+              if not m['decision']['pass'] or a['identity_diffuse_used'] or not a['lowpass_removed']:
+                  raise SystemExit(f'{n}: numeric/scope contract failed')
+              if abs(float(a['micro_height_stats']['median'])) > 2.0:
+                  raise SystemExit(f'{n}: renderer residual median mismatch: {a["micro_height_stats"]}')
+              for k,f in keys:
+                  rv=invariants[k]; v=f(m)
+                  if isinstance(rv,float):
+                      if abs(float(v)-float(rv)) > 1e-12: raise SystemExit(f'{n}: invariant {k} drifted')
+                  elif v != rv: raise SystemExit(f'{n}: invariant {k} drifted')
+              summary['variants'][n]={
+                  'micro_height_raw_scale_p995':a['micro_height_stats']['scale'],
+                  'micro_height_median_raw':a['micro_height_stats']['median'],
+                  'micro_height_std_normalized':a['micro_height_std_normalized'],
+                  'micro_height_abs_p95_normalized':a['micro_height_abs_p95_normalized'],
+                  'micro_height_abs_p99_normalized':a['micro_height_abs_p99_normalized'],
+              }
+          (root/'edge_preserving_summary_v2.json').write_text(json.dumps(summary,indent=2))
+          print(json.dumps(summary,indent=2))
+          PY
+
+      - name: Build A/B/C comparison sheets
+        run: |
+          OUT=artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2
+          montage -label 'A = Gaussian 6' "$OUT/gaussian6/face_close.png" -label 'B = Bilateral 32' "$OUT/bilateral32/face_close.png" -label 'C = Bilateral 64' "$OUT/bilateral64/face_close.png" -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_face_close.jpg"
+          montage -label 'A = Gaussian 6' "$OUT/gaussian6/face_3q_close.png" -label 'B = Bilateral 32' "$OUT/bilateral32/face_3q_close.png" -label 'C = Bilateral 64' "$OUT/bilateral64/face_3q_close.png" -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_face_3q_close.jpg"
+          montage -label 'A = Gaussian 6' "$OUT/gaussian6/front.png" -label 'B = Bilateral 32' "$OUT/bilateral32/front.png" -label 'C = Bilateral 64' "$OUT/bilateral64/front.png" -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_front.jpg"
+          montage -label 'A = Gaussian 6' "$OUT/gaussian6/three_quarter_right.png" -label 'B = Bilateral 32' "$OUT/bilateral32/three_quarter_right.png" -label 'C = Bilateral 64' "$OUT/bilateral64/three_quarter_right.png" -tile 3x1 -geometry '+8+8' -background white "$OUT/ABC_three_quarter_right.jpg"
+
+      - name: Assert no raw or derived DRL maps are redistributed
+        run: |
+          OUT=artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2
+          ! find "$OUT" -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.psd' -o -iname '*.exr' -o -iname 'displace*.png' -o -iname 'lowpass_*.png' -o -iname '*micro_height*.png' \) | grep .
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-micro-surface-edge-preserving-abc-gate-v2
+          path: artifacts/drl-gnm-micro-surface-edge-preserving-abc-v2/
+          retention-days: 14
