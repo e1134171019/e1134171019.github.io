@@ -1,0 +1,27 @@
+name: GNM Final Eye Math Unit
+
+on:
+  push:
+    branches:
+      - experiment/gnm-final-eye-gate
+    paths:
+      - 'tests/experiments/test_eye_gate_math.py'
+      - 'tools/experiments/eye_gate_math.py'
+      - '.github/workflows/gnm-final-eye-math-unit.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  eye-math:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install unit dependencies
+        run: python -m pip install --disable-pip-version-check pytest numpy
+      - name: Run final eye math contract
+        run: python -m pytest tests/experiments/test_eye_gate_math.py -q
