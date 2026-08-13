@@ -1,0 +1,90 @@
+name: DRL GNM Semantic Region Diffuse Gate
+
+on:
+  push:
+    branches:
+      - experiment/gnm-appearance-gate
+    paths:
+      - 'tools/experiments/drl_gnm_diffuse_semantic_region_gate.py'
+      - '.github/workflows/drl-gnm-diffuse-semantic-region-gate.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  semantic:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Acquire pinned Google GNM v3
+        run: |
+          git clone --filter=blob:none https://github.com/google/GNM.git /tmp/GNM
+          cd /tmp/GNM
+          git checkout 98450b3c943101d5859ac1ceb7331ec918ebc321
+          test "$(git rev-parse HEAD)" = "98450b3c943101d5859ac1ceb7331ec918ebc321"
+          echo "868075bbb172fc6574ece89338e21fdc0efe0be91ca4e6e5c3166a1a97840055  gnm/shape/data/versions/v3_0/gnm_head.npz" | sha256sum -c -
+      - name: Acquire DRL OBJ and real diffuse privately
+        run: |
+          mkdir -p /tmp/drl artifacts/drl-gnm-diffuse-transfer-gate
+          URL='https://www.digitalrealitylab.com/wp-content/uploads/SampleScans/Marcus_PBR_Sample_01.zip'
+          curl -L --fail --retry 3 --retry-delay 3 -A 'Mozilla/5.0' -o /tmp/Marcus_PBR_Sample_01.zip "$URL"
+          test "$(stat -c%s /tmp/Marcus_PBR_Sample_01.zip)" -eq 928494471
+          sha256sum /tmp/Marcus_PBR_Sample_01.zip > artifacts/drl-gnm-diffuse-transfer-gate/drl-source-archive-sha256.txt
+          python3 - <<'PY'
+          import zipfile
+          from pathlib import Path
+          z=zipfile.ZipFile('/tmp/Marcus_PBR_Sample_01.zip')
+          for src,dst in {'OBJ/Marcus_PBR_Sample_01.obj':'Marcus_PBR_Sample_01.obj','Textures/Marcus_38_diffuse.png':'Marcus_38_diffuse.png'}.items():
+              info=z.getinfo(src); data=z.read(info); Path('/tmp/drl',dst).write_bytes(data)
+              print(src,len(data),f'{info.CRC:08x}')
+          PY
+      - name: Install CPU runtime and build 4K diagnostic proxy
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y blender python3-numpy python3-pil imagemagick libegl1 libgl1 libgles2
+          convert -limit memory 1024MiB -limit map 2048MiB /tmp/drl/Marcus_38_diffuse.png -resize '4096x4096>' /tmp/drl/diffuse_4k.png
+          identify /tmp/drl/diffuse_4k.png
+      - name: Execute official semantic-region diffuse diagnostic
+        env:
+          LIBGL_ALWAYS_SOFTWARE: '1'
+          PYTHONPATH: ${{ github.workspace }}
+          GNM_MODEL: /tmp/GNM/gnm/shape/data/versions/v3_0/gnm_head.npz
+          DRL_OBJ: /tmp/drl/Marcus_PBR_Sample_01.obj
+          DRL_DIFFUSE: /tmp/drl/diffuse_4k.png
+          TRANSFER_SIZE: '1024'
+        run: |
+          blender --background --python tools/experiments/drl_gnm_diffuse_semantic_region_gate.py
+          test -s artifacts/drl-gnm-diffuse-transfer-gate/diffuse_transfer_metrics.json
+          test -s artifacts/drl-gnm-diffuse-transfer-gate/00_drl_gnm_diffuse_transfer_contact_sheet.jpg
+      - name: Enforce semantic diagnostic contract
+        run: |
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          m=json.loads(Path('artifacts/drl-gnm-diffuse-transfer-gate/diffuse_transfer_metrics.json').read_text())
+          print(json.dumps(m,indent=2))
+          c=m['semantic_region_contract']
+          if c['region_count'] != 20 or c['max_distance_to_region_reference_mm'] != 12.0 or not c['requires_exact_region_match']:
+              raise SystemExit('semantic contract changed')
+          if c['geometric_max_distance_mm'] != 15.0 or c['geometric_normal_angle_limit_deg'] != 60.0:
+              raise SystemExit('geometric contract changed')
+          if not c['thresholds_fixed_before_real_data_run']:
+              raise SystemExit('semantic threshold provenance missing')
+          if not m['decision']['pass']:
+              raise SystemExit('not enough semantically legal support to render')
+          if m['blend']['invalid_correspondence_nonzero_alpha'] != 0:
+              raise SystemExit('invalid donor alpha leak')
+          PY
+      - name: Assert no raw or derived identity texture is redistributed
+        run: |
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/Marcus_38_diffuse.png
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/diffuse_4k.png
+          test ! -e artifacts/drl-gnm-diffuse-transfer-gate/gnm_drl_diffuse_transfer_1024.png
+          ! find artifacts/drl-gnm-diffuse-transfer-gate -type f \( -iname '*.obj' -o -iname '*.fbx' -o -iname '*.ztl' -o -iname '*.psd' -o -iname '*.exr' \) | grep .
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drl-gnm-diffuse-semantic-region-gate
+          path: artifacts/drl-gnm-diffuse-transfer-gate/
+          retention-days: 14
