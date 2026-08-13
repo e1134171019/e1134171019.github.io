@@ -67,16 +67,30 @@ class TransferABMathContractTest(unittest.TestCase):
         self.assertEqual(accepted.tolist(), [True, False, False])
 
     def test_semantic_region_pair_requires_same_region_and_both_near_reference(self):
-        try:
-            from tools.experiments.transfer_ab_math import accept_semantic_region_pair
-        except ImportError as exc:
-            self.fail(f"semantic region helper missing: {exc}")
+        from tools.experiments.transfer_ab_math import accept_semantic_region_pair
         target_label = np.array([3, 3, 5, 7])
         donor_label = np.array([3, 5, 5, 7])
         target_dist = np.array([0.004, 0.003, 0.013, 0.006])
         donor_dist = np.array([0.010, 0.004, 0.005, 0.014])
         accepted = accept_semantic_region_pair(target_label, donor_label, target_dist, donor_dist)
         self.assertEqual(accepted.tolist(), [True, False, False, False])
+
+    def test_micro_height_removes_low_frequency_and_normalizes_residual(self):
+        try:
+            from tools.experiments.transfer_ab_math import micro_height_from_lowpass
+        except ImportError as exc:
+            self.fail(f"micro-height helper missing: {exc}")
+        low = np.full((3, 3), 10.0)
+        src = low.copy()
+        src[1, 1] = 12.0
+        micro, stats = micro_height_from_lowpass(src, low, percentile=100.0)
+        self.assertAlmostEqual(float(micro[0, 0]), 0.0)
+        self.assertAlmostEqual(float(micro[1, 1]), 1.0)
+        self.assertGreater(stats['scale'], 0.0)
+        self.assertLessEqual(float(np.max(np.abs(micro))), 1.0)
+        flat, flat_stats = micro_height_from_lowpass(low, low)
+        np.testing.assert_allclose(flat, 0.0)
+        self.assertEqual(flat_stats['scale'], 0.0)
 
 
 if __name__ == "__main__":
