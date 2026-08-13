@@ -29,6 +29,14 @@ class TransferABMathContractTest(unittest.TestCase):
         np.testing.assert_allclose(dist[:3], [0.003, 0.004, 0.006])
         self.assertTrue(np.isnan(dist[3]))
 
+    def test_nearest_fallback_uses_fixed_15mm_and_60degree_contract(self):
+        from tools.experiments.transfer_ab_math import accept_nearest_fallback
+
+        distance = np.array([0.014, 0.016, 0.010, 0.015])
+        normal_abs_dot = np.array([0.50, 0.99, 0.49, 0.50])
+        accepted = accept_nearest_fallback(distance, normal_abs_dot)
+        self.assertEqual(accepted.tolist(), [True, False, False, True])
+
 
 if __name__ == "__main__":
     unittest.main()
